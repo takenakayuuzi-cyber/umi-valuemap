@@ -51,6 +51,7 @@ div.stButton > button[kind="primary"]:hover { background: #0a86c4; color: #fff; 
 .today small { color: #0a86c4; font-weight: 900; } .today b { display: block; color: #1b2a4a; font-size: 1.25rem; line-height: 1.5; }
 .qbox { border: 4px dashed #f2b800; background: #fff8dc; border-radius: 18px; padding: 16px 22px; margin: 10px 0 14px; }
 .qbox small { color: #8a6400; font-weight: 900; } .qbox p { color: #1b2a4a; font-size: 1.7rem; font-weight: 900; line-height: 1.6; margin: 6px 0 0; }
+.qbox .hint { margin-top: 12px; padding-top: 10px; border-top: 2px dashed #f2d27a; color: #1b2a4a; font-size: 1.15rem; font-weight: 800; line-height: 1.6; }
 .sec { color: #0a86c4; font-weight: 900; font-size: 1.25rem; margin: 18px 0 6px; }
 .mline { border-radius: 18px; padding: 12px 18px; background: #dcf8e9; border-left: 8px solid #2cc97b; color: #1b2a4a; font-size: 1.3rem; font-weight: 900; margin: 6px 0 12px; }
 .mline small { display: block; color: #5d6e8f; font-size: .85rem; font-weight: 700; margin-top: 4px; }
@@ -122,6 +123,13 @@ def make_question(counts, evidence):
         except ai.AiError as e:
             out["why"] = str(e)
     return out
+
+
+def make_hint(pieces, evidence, question):
+    """この机へのひとこと：分かれ目の2人（と、その2人が入れた根拠の言葉）と、読みなおす場面を、プログラムが場面の表から1文にする。
+    AIに整えさせると、問いを写したり場面を落としたりしたので（ためして 0/8）、AIは使わない。"""
+    ctx = core.hint_context(VM, pieces, evidence)
+    return {"hint": ctx["fallback"], "scene": (ctx["scene"] or {}).get("id")}
 
 
 def make_move(before, after):
@@ -255,13 +263,15 @@ def desk_view():
     if st.button("🎯 この机の問いをもらう", type="primary", disabled=not p1):
         with st.spinner("問いを えらんでいます…"):
             q = make_question(c1, evidence)
+            q.update(make_hint(p1, evidence, q["question"]))
         board().put(n, "r1", {"pieces": {str(k): v for k, v in p1.items()}, "counts": c1, "evidence": evidence, **q, "at": time.time()})
         st.rerun()
 
     r1 = rec.get("r1")
     if not r1:
         return
-    st.markdown(f'<div class="qbox"><small>この机の問い（{r1["qid"]}）</small><p>{r1["question"]}</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="qbox"><small>この机の問い（{r1["qid"]}）</small><p>{r1["question"]}</p>'
+                + (f'<div class="hint">📖 この机へのひとこと：{r1["hint"]}</div>' if r1.get("hint") else "") + "</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="sec">② 話し合ったあとの考え：②のこまを、どこに置いた？（①は動かさない）</div>', unsafe_allow_html=True)
     left, right = st.columns([3, 2])
@@ -312,8 +322,8 @@ def teacher_board():
     # ②がまだの机は、①のまま数える（まだ入れていない机を「動いた」と見ないように）
     tot2 = {c: sum((d.get("r2") or d.get("r1") or {}).get("counts", {}).get(c, 0) for d in data.values()) for c in CODES}
     a, b, c = st.columns([2, 2, 2])
-    a.markdown('<div class="sec">会場ぜんたい ①</div>' + core.map_html(VM, LAY, tot1), unsafe_allow_html=True)
-    b.markdown('<div class="sec">会場ぜんたい ②</div>' + core.map_html(VM, LAY, tot2), unsafe_allow_html=True)
+    a.markdown('<div class="sec">会場ぜんたい ①</div>' + core.map_html(VM, LAY, tot1, rnd=1), unsafe_allow_html=True)
+    b.markdown('<div class="sec">会場ぜんたい ②</div>' + core.map_html(VM, LAY, tot2, rnd=2), unsafe_allow_html=True)
     with c:
         st.markdown(f"**入れた机：** {sum(1 for d in data.values() if d.get('r1'))} / {DESKS}　**②まで：** {sum(1 for d in data.values() if d.get('r2'))}")
         if any(d.get("r2") for d in data.values()):
@@ -332,11 +342,13 @@ def teacher_board():
                 if not r1:
                     st.markdown(f'<div class="dcard"><h4>机 {n}</h4><span class="s">まだ</span></div>', unsafe_allow_html=True)
                     continue
-                maps = core.map_html(VM, LAY, r1["counts"], small=True, mark="①") + (
-                    '<div style="height:6px"></div>' + core.map_html(VM, LAY, r2["counts"], small=True, mark="②") if r2 else "")
+                # 机の画面と同じように、番号つきの太一のこま（②の地図には①を うすく重ねる）
+                maps = core.map_html(VM, LAY, r1["counts"], small=True, mark="①", pieces=r1.get("pieces"), rnd=1) + (
+                    '<div style="height:6px"></div>' + core.map_html(VM, LAY, r2["counts"], small=True, mark="②", pieces=r2.get("pieces"), rnd=2,
+                                                                       ghost=r1.get("pieces")) if r2 else "")
                 talks = sum(1 for m in d.get("chat", []) if m["role"] == "user")
                 st.markdown(f'<div class="dcard"><h4>机 {n}　<small>{r1["qid"]}{"・AI" if r1["by"] == "ai" else ""}</small></h4>{maps}'
-                            f'<div class="q">{r1["question"]}</div>'
+                            f'<div class="q">{r1["question"]}</div>' + (f'<div class="s">📖 {r1["hint"]}</div>' if r1.get("hint") else "")
                             + (f'<div class="m">➡ {r2["line"]}</div>' if r2 else '<div class="s">②はまだ</div>')
                             + (f'<div class="s">💬 壁打ち {talks}回</div>' if talks else "") + "</div>", unsafe_allow_html=True)
 

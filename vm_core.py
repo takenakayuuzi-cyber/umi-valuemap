@@ -267,7 +267,9 @@ def load_layout(vm, name="海の命"):
     if os.path.exists(bundle):
         with open(bundle, encoding="utf-8") as f:
             for key, b64 in json.load(f).items():
-                if not key.startswith("_"):
+                if key.startswith("face_"):   # 番号のない太一の顔（会場ぜんたいの人数に使う）
+                    lay["pieces"][key] = b64
+                elif not key.startswith("_"):
                     rnd, no = (int(x) for x in key.split("_"))
                     lay["pieces"][(rnd, no)] = base64.b64decode(b64)
                     lay["pieces"][key] = b64
@@ -295,6 +297,7 @@ def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1, ghost=No
         # ghost（①のこま）をわたすと、②の地図に うすく重ねる（Canva のボードと同じように、①から②への動きが1枚で見える）
         layers = ([(ghost, 1, 0.45, 2.2)] if ghost else []) + [(pieces, rnd, 1, -2.2 if ghost else 0)]
         imgs = ""
+        pw, gap = (11.5, 10.5) if small else (6.6, 6.2)   # 小さい地図では、こまを大きめに
         for pcs, r, alpha, shift in layers:
             by_place = {}
             for no, place in sorted(pcs.items(), key=lambda x: int(x[0])):
@@ -306,19 +309,28 @@ def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1, ghost=No
                     dx, dy = SPREAD[k % len(SPREAD)]
                     b64 = lay["pieces"].get(f"{r}_{no}")
                     if b64:
-                        imgs += (f'<img src="data:image/png;base64,{b64}" style="position:absolute;left:calc({x / W * 100:.2f}% + {dx * 6.2 + shift:.1f}cqw);'
-                                 f'top:calc({y / H * 100:.2f}% + {dy * 6.2:.1f}cqw);width:6.6cqw;transform:translate(-50%,-50%);opacity:{alpha};'
+                        imgs += (f'<img src="data:image/png;base64,{b64}" style="position:absolute;left:calc({x / W * 100:.2f}% + {dx * gap + shift * gap / 6.2:.1f}cqw);'
+                                 f'top:calc({y / H * 100:.2f}% + {dy * gap:.1f}cqw);width:{pw}cqw;transform:translate(-50%,-50%);opacity:{alpha};'
                                  f'filter:drop-shadow(0 0.4cqw 0.8cqw rgba(0,0,0,.5))">')
         tag = f'<div style="position:absolute;left:8px;top:6px;color:#ffd54a;font-weight:900">{mark}</div>' if mark else ""
         return (f'<div style="position:relative;width:100%;container-type:inline-size;border-radius:18px;overflow:hidden;line-height:1">'
                 f'<img src="data:image/jpeg;base64,{lay["image_b64"]}" style="width:100%;display:block">{tag}{imgs}</div>')
     color = {"corner": "#ffd54a", "center": "#8fdcff", "between": "#ff9ccb"}
     dots = ""
+    face = (lay.get("pieces") or {}).get(f"face_{rnd}")
     for p in vm["places"]:
         n = int(counts.get(p["code"], 0) or 0)
         if not n:
             continue
         x, y = lay["anchors"][p["code"]]
+        if face:   # 太一の顔の大きさで人数を見せ、右下に人数の数字
+            size = 8.0 + 3.0 * n ** 0.5
+            dots += (f'<div style="position:absolute;left:{x / W * 100:.2f}%;top:{y / H * 100:.2f}%;width:{size:.1f}cqw;height:{size:.1f}cqw;transform:translate(-50%,-50%)">'
+                     f'<img src="data:image/png;base64,{face}" style="width:100%;filter:drop-shadow(0 0.5cqw 1cqw rgba(0,0,0,.5))">'
+                     f'<span style="position:absolute;right:-0.6cqw;bottom:-0.6cqw;min-width:3.6cqw;height:3.6cqw;padding:0 0.6cqw;border-radius:2cqw;'
+                     f'background:{"#ffd54a" if rnd == 2 else "#fff"};color:#14254a;font-weight:900;font-size:max(9px,2.6cqw);display:flex;'
+                     f'align-items:center;justify-content:center;box-shadow:0 0 0 0.3cqw #14254a">{n}</span></div>')
+            continue
         size = 4.2 + 2.0 * n ** 0.5   # 地図の横はばに対する割合（大きい地図でも小さい地図でも同じ見え方）
         dots += (f'<div style="position:absolute;left:{x / W * 100:.2f}%;top:{y / H * 100:.2f}%;width:{size:.1f}cqw;height:{size:.1f}cqw;'
                  f'transform:translate(-50%,-50%);border-radius:50%;background:{color[p["kind"]]};color:#14254a;display:flex;'
@@ -477,3 +489,48 @@ def check_wall(out):
     if any(w in out for w in ("正解は", "正しいのは", "答えは")):
         return None
     return "".join(sentences(out)[:2]) or out[:120]
+
+
+# ---------- この机へのひとこと（叙述にもどる手がかり） ----------
+def hint_context(vm, pieces, evidence):
+    """この机で考えが分かれているところと、読みなおす場面（設計メモの場面の表から、プログラムが選ぶ）。
+    pieces: {番号: 場所}。本文は使わない（研究会用の Gemini には本文を送らないため）。"""
+    P = places_of(vm)
+    pieces = {int(k): v for k, v in (pieces or {}).items() if v in P}
+    counts = counts_of(pieces)
+    w = weights(vm, counts)
+    corners = [c for c in sorted(w, key=lambda c: -w[c]) if w[c] > 0]
+    # 分かれ目の2人：いちばん多い角の人と、つぎに多い角（なければ ちがう場所）の人
+    pair = None
+    if pieces:
+        main = corners[0] if corners else None
+        a = next((n for n, p in sorted(pieces.items()) if p == main), None) or min(pieces)
+        others = [n for n, p in sorted(pieces.items()) if p != pieces[a]]
+        if len(corners) > 1:
+            b = next((n for n in others if corners[1] in P[pieces[n]]["parts"] or pieces[n] == corners[1]), None)
+        else:
+            b = others[0] if others else None
+        if b:
+            pair = (a, pieces[a], b, pieces[b])
+    # 読みなおす場面：分かれている角に いちばん多く関係する場面（同じなら、人数の少ない角に関係する場面を先に）
+    involved = set(corners[:2]) or set(c for c, p in P.items() if p["kind"] == "corner")
+    minority = corners[1] if len(corners) > 1 else None
+    def score(s):
+        cs = set(s["corners"])
+        return (len(cs & involved), minority in cs, bool(s.get("page")))
+    scene = max(vm.get("scenes") or [None], key=lambda s: score(s) if s else (0,)) if vm.get("scenes") else None
+    ev = {int(e["no"]): e["word"] for e in evidence or [] if e.get("word")}
+    name = lambda c: short(vm, c)
+    who = lambda n: f"{n}番は" + (f"「{ev[n]}」から" if n in ev else "")
+    if pair:   # 机が入れた根拠の言葉（叙述）があれば、それも入れる
+        head = f"{who(pair[0])}{name(pair[1])}、{who(pair[2])}{name(pair[3])}に置いた。"
+        tail = "2人の分かれ目になった言葉をさがそう。"
+    else:
+        only = next(iter(pieces.values()), None)
+        head = f"みんなが{name(only)}に置いた。" if only else ""
+        tail = "そこに置いた決め手の言葉を、一人ずつ指さそう。"
+    where_ = f"{scene['page'] + 'の' if scene and scene.get('page') else ''}「{scene['scene']}」場面を読みなおして、" if scene else "本文を読みなおして、"
+    keep = ([f"{pair[0]}番", f"{pair[2]}番"] if pair else []) + ([scene["scene"]] if scene else []) + [ev[n] for n in (pair[0], pair[2]) if n in ev] if pair else ([scene["scene"]] if scene else [])
+    return {"pair": pair, "scene": scene, "words": list(ev.values()), "fallback": head + where_ + tail, "keep": keep,
+            "numbers": sorted(pieces), "names": sorted({name(p) for p in pieces.values()} | {P[c]["name"] for c in P})}
+

@@ -231,3 +231,4 @@ def chat(system, history, timeout=15):
         return _run(lambda: _gemini_full(system, contents), timeout).strip()
     msgs = [{"role": "user" if m["role"] == "user" else "assistant", "content": m["text"]} for m in history]
     return _run(lambda: _ollama_full(system, msgs, timeout), timeout).strip()
+
