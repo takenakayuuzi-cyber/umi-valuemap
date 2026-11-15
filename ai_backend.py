@@ -17,6 +17,10 @@ class AiError(Exception):
     pass
 
 
+# 先生の画面の「⏹ 研究会を終わる」で True になる。True のあいだは、AIに一切聞かない（Gemini のクレジットを使わない）
+STOPPED = False
+
+
 def setting(key, default=""):
     """設定は Streamlit の Secrets → 環境変数 の順に読む（キーをプログラムに書かないため）。"""
     try:
@@ -130,6 +134,8 @@ def _ollama_full(system, messages, timeout, json_mode=False):
 
 
 def _run(fn, timeout):
+    if STOPPED:
+        raise AiError("研究会が終わったので、AIを止めています")
     box = {}
 
     def work():
@@ -150,6 +156,8 @@ def _run(fn, timeout):
 
 def ask(system, user, timeout=8):
     """1回聞く。timeout 秒で答えなければ AiError。"""
+    if STOPPED:
+        raise AiError("研究会が終わったので、AIを止めています")
     box = {}
 
     def work():

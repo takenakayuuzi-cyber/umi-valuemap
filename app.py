@@ -67,11 +67,23 @@ class Board:
     def __init__(self):
         self.lock = threading.Lock()
         self.path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".store", "board.json")
+        self.flag = os.path.join(os.path.dirname(self.path), "closed")   # 「研究会を終わる」を押したら、このファイルができる
         try:
             with open(self.path, encoding="utf-8") as f:
                 self.data = {int(k): v for k, v in json.load(f).items()}
         except (OSError, ValueError):
             self.data = {}
+
+    @property
+    def closed(self):
+        return os.path.exists(self.flag)
+
+    def set_closed(self, on):
+        os.makedirs(os.path.dirname(self.flag), exist_ok=True)
+        if on:
+            open(self.flag, "w").close()
+        elif os.path.exists(self.flag):
+            os.remove(self.flag)
 
     def put(self, desk, key, value):
         with self.lock:
@@ -382,6 +394,21 @@ def teacher_board():
 
 def teacher_view():
     st.title(f"🗺 先生用：{DESKS}机のバリューマップ")
+    # ワンタッチで止める・再開する（止めているあいだは Gemini を使わない＝クレジットを使わない）
+    if board().closed:
+        c = st.columns([3, 1])
+        c[0].error("⏹ 研究会を終わっています。AI（Gemini）は止まっていて、机の画面には「研究会は終わりました」と出ています。")
+        if c[1].button("▶ 再開する", type="primary", use_container_width=True):
+            board().set_closed(False)
+            ai.STOPPED = False
+            st.rerun()
+    else:
+        c = st.columns([3, 1])
+        c[0].caption("研究会が終わったら、右のボタンを押してください。AI（Gemini）を止め、机の画面を閉じます。もう一度押すと再開できます。")
+        if c[1].button("⏹ 研究会を終わる", use_container_width=True):
+            board().set_closed(True)
+            ai.STOPPED = True
+            st.rerun()
     teacher_board()
     data = board().all()
     talked = [n for n in sorted(data) if data[n].get("chat")]
@@ -396,7 +423,14 @@ def teacher_view():
             st.rerun()
 
 
+# 研究会が終わっていたら、AIを一切使わない（どの画面から来ても）
+ai.STOPPED = board().closed
+
 role = st.session_state.get("role")
+if role == "desk" and board().closed:
+    st.title("🗺 「海の命」バリューマップの部屋")
+    st.info("研究会は終わりました。ご参加ありがとうございました。")
+    st.stop()
 if role == "teacher":
     teacher_view()
 elif role == "desk":
