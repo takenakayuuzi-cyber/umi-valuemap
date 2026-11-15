@@ -36,27 +36,25 @@ def layout():
 LAY = layout()
 TODAY = (LAY or {}).get("today", "")
 
-# Canva のバリューマップに合わせた色（紺・黄）
+# 白い画面（ドクソウと同じ方針。ダークにしない）。Canva のバリューマップの絵（紺）は、白い画面の中のカードとして置く
 st.markdown("""<style>
-.stApp { background: #14254a; }
-.block-container { padding-top: 1.4rem; max-width: 1240px; }
-h1, h2, h3, p, label, .stMarkdown, .stCaption { color: #fff !important; }
-h1 { font-size: 2rem !important; }
+.block-container { padding-top: 4.2rem; max-width: 1240px; }   /* 上のバー（GitHub のマークなど）と重ならないように */
 div.stButton > button { min-height: 3.1rem; font-size: 1.1rem; font-weight: 800; border-radius: 999px; }
-div.stButton > button[kind="primary"] { background: #ffd54a; color: #14254a; border: 0; }
-div.stButton > button[kind="primary"]:hover { background: #ffe07a; color: #14254a; }
-.desk { display: inline-block; border: 2px solid #9db8e8; border-radius: 12px; padding: 4px 18px; font-size: 1.6rem; font-weight: 900; color: #fff; }
-.today { background: #fff; border-radius: 16px; padding: 14px 20px; margin: 10px 0 6px; }
-.today small { color: #14a9ee; font-weight: 900; } .today b { display: block; color: #14254a; font-size: 1.25rem; line-height: 1.5; }
-.qbox { border: 4px dashed #ffd54a; border-radius: 18px; padding: 16px 22px; margin: 10px 0 14px; }
-.qbox small { color: #ffd54a; font-weight: 900; } .qbox p { color: #fff; font-size: 1.7rem; font-weight: 900; line-height: 1.6; margin: 6px 0 0; }
-.sec { color: #ffd54a; font-weight: 900; font-size: 1.25rem; margin: 18px 0 6px; }
-.mline { border-radius: 18px; padding: 12px 18px; background: #1d3a6e; border-left: 8px solid #ffd54a; color: #fff; font-size: 1.3rem; font-weight: 900; margin: 6px 0 12px; }
-.mline small { display: block; color: #b9c9ea; font-size: .85rem; font-weight: 700; margin-top: 4px; }
-.dcard { border-radius: 16px; padding: 10px 12px; background: #1d3363; margin-bottom: 12px; color: #fff; }
-.dcard h4 { margin: 0 0 6px; color: #fff; } .dcard h4 small { color: #ffd54a; }
-.dcard .q { font-weight: 800; line-height: 1.5; margin-top: 6px; } .dcard .m { color: #ffd54a; font-weight: 800; margin-top: 6px; }
-.dcard .s { color: #b9c9ea; font-size: .8rem; }
+div.stButton > button p { color: inherit !important; font-weight: 800; }   /* ボタンの文字は、ボタンの色に合わせる */
+div.stButton > button[kind="primary"] { background: linear-gradient(180deg, #3dbdf6, #14a9ee); color: #fff; border: 0; }
+div.stButton > button[kind="primary"]:hover { background: #0a86c4; color: #fff; }
+.desk { display: inline-block; background: #14a9ee; color: #fff; border-radius: 14px; padding: 4px 20px; font-size: 1.6rem; font-weight: 900; }
+.today { background: #e4f6fe; border-radius: 16px; padding: 14px 20px; margin: 10px 0 6px; }
+.today small { color: #0a86c4; font-weight: 900; } .today b { display: block; color: #1b2a4a; font-size: 1.25rem; line-height: 1.5; }
+.qbox { border: 4px dashed #f2b800; background: #fff8dc; border-radius: 18px; padding: 16px 22px; margin: 10px 0 14px; }
+.qbox small { color: #8a6400; font-weight: 900; } .qbox p { color: #1b2a4a; font-size: 1.7rem; font-weight: 900; line-height: 1.6; margin: 6px 0 0; }
+.sec { color: #0a86c4; font-weight: 900; font-size: 1.25rem; margin: 18px 0 6px; }
+.mline { border-radius: 18px; padding: 12px 18px; background: #dcf8e9; border-left: 8px solid #2cc97b; color: #1b2a4a; font-size: 1.3rem; font-weight: 900; margin: 6px 0 12px; }
+.mline small { display: block; color: #5d6e8f; font-size: .85rem; font-weight: 700; margin-top: 4px; }
+.dcard { border-radius: 16px; padding: 10px 12px; background: #f2f6fc; margin-bottom: 12px; color: #1b2a4a; }
+.dcard h4 { margin: 0 0 6px; color: #1b2a4a; } .dcard h4 small { color: #0a86c4; }
+.dcard .q { font-weight: 800; line-height: 1.5; margin-top: 6px; } .dcard .m { color: #17804c; font-weight: 800; margin-top: 6px; }
+.dcard .s { color: #5d6e8f; font-size: .8rem; }
 </style>""", unsafe_allow_html=True)
 
 
@@ -320,6 +318,7 @@ def teacher_board():
         if any(d.get("r2") for d in data.values()):
             st.markdown("**① から ② への動き（会場ぜんたい）：** " + core.move_line(VM, tot1, tot2))
         st.caption(f"②がまだの机は、①のまま数えています。AI：{ai.provider()}（5秒ごとに新しくなります）")
+    st.divider()
     for row in range(2):
         cols = st.columns(5)
         for i in range(5):
