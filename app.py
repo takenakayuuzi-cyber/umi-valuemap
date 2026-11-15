@@ -1,11 +1,14 @@
 """研究会用「海の命」バリューマップの部屋（Streamlit Community Cloud ＋ Gemini）。
 
 ・入口のパスコード（参加者用・先生用）と Gemini の APIキーは、Streamlit の Secrets に入れる（プログラムに書かない）
-・机（1〜10）：① 話し合いの前の人数 → 問い（表と判定の決まりで選ぶ。Q9・Q10 だけAIが言葉を整える）
-              ② 話し合いの後の人数 → ①から②への動きを1行（AI。答えなければ人数の差からプログラムが1行）
-・先生：10机のちらばり・問い・動きの一覧（5秒ごと）。ほかの机の入力は、先生の画面だけで見える
+・机（1〜10）：📷 Canva のバリューマップの写真 → AIが こまの場所を読んで人数を入れる（机が確かめて直す）
+              ① 話し合いの前の人数 → 問い（表と判定の決まりで選ぶ。Q9・Q10 だけAIが言葉を整える）
+              ② 話し合いの後の人数 → ①から②への動きを1行（AI。合わなければ人数の差からプログラムが1行）
+              💬 壁打ち → 答えは言わず、問い返すAI（2文まで）
+・先生：10机のマップ・問い・動き・壁打ちの回数を一覧（5秒ごと）。ほかの机の入力は、先生の画面だけで見える
 ・机の入力は、このアプリの中だけに置く（アプリが止まると消える。研究会の1日用）
 """
+import io
 import json
 import os
 import threading
@@ -17,23 +20,43 @@ import ai_backend as ai
 import vm_core as core
 
 st.set_page_config(page_title="海の命 バリューマップの部屋", page_icon="🗺", layout="wide")
-VM = core.load(ai.setting("MATERIAL", "海の命"))
+MATERIAL = ai.setting("MATERIAL", "海の命")
+VM = core.load(MATERIAL)
 P = core.places_of(VM)
 CODES = [p["code"] for p in VM["places"]]
 NAMES = {c: core.short(VM, c) for c in CODES}
 DESKS, SEATS = 10, 8
 
+
+@st.cache_resource
+def layout():
+    return core.load_layout(VM, MATERIAL)
+
+
+LAY = layout()
+TODAY = (LAY or {}).get("today", "")
+
+# Canva のバリューマップに合わせた色（紺・黄）
 st.markdown("""<style>
-.block-container { padding-top: 1.6rem; max-width: 1180px; }
-div.stButton > button { min-height: 3.2rem; font-size: 1.15rem; font-weight: 800; border-radius: 999px; }
-div.stButton > button[kind="primary"] { background: linear-gradient(180deg, #3dbdf6, #14a9ee); border: 0; }
-.qcard { border: 5px solid #14a9ee; border-radius: 26px; padding: 22px 28px; background: #fff; margin: 8px 0 14px; }
-.qcard small { color: #5d6e8f; font-weight: 800; }
-.qcard p { font-size: 1.9rem; font-weight: 900; line-height: 1.6; margin: 6px 0 0; color: #1b2a4a; }
-.mline { border-radius: 20px; padding: 14px 20px; background: #dcf8e9; font-size: 1.35rem; font-weight: 900; color: #1b2a4a; margin: 6px 0 12px; }
-.dcard { border-radius: 20px; padding: 12px 14px; background: #f2f6fc; margin-bottom: 12px; min-height: 120px; }
-.dcard h4 { margin: 0 0 4px; } .dcard .q { font-weight: 800; line-height: 1.5; } .dcard .m { color: #17804c; font-weight: 800; margin-top: 6px; }
-.dcard small { color: #5d6e8f; }
+.stApp { background: #14254a; }
+.block-container { padding-top: 1.4rem; max-width: 1240px; }
+h1, h2, h3, p, label, .stMarkdown, .stCaption { color: #fff !important; }
+h1 { font-size: 2rem !important; }
+div.stButton > button { min-height: 3.1rem; font-size: 1.1rem; font-weight: 800; border-radius: 999px; }
+div.stButton > button[kind="primary"] { background: #ffd54a; color: #14254a; border: 0; }
+div.stButton > button[kind="primary"]:hover { background: #ffe07a; color: #14254a; }
+.desk { display: inline-block; border: 2px solid #9db8e8; border-radius: 12px; padding: 4px 18px; font-size: 1.6rem; font-weight: 900; color: #fff; }
+.today { background: #fff; border-radius: 16px; padding: 14px 20px; margin: 10px 0 6px; }
+.today small { color: #14a9ee; font-weight: 900; } .today b { display: block; color: #14254a; font-size: 1.25rem; line-height: 1.5; }
+.qbox { border: 4px dashed #ffd54a; border-radius: 18px; padding: 16px 22px; margin: 10px 0 14px; }
+.qbox small { color: #ffd54a; font-weight: 900; } .qbox p { color: #fff; font-size: 1.7rem; font-weight: 900; line-height: 1.6; margin: 6px 0 0; }
+.sec { color: #ffd54a; font-weight: 900; font-size: 1.25rem; margin: 18px 0 6px; }
+.mline { border-radius: 18px; padding: 12px 18px; background: #1d3a6e; border-left: 8px solid #ffd54a; color: #fff; font-size: 1.3rem; font-weight: 900; margin: 6px 0 12px; }
+.mline small { display: block; color: #b9c9ea; font-size: .85rem; font-weight: 700; margin-top: 4px; }
+.dcard { border-radius: 16px; padding: 10px 12px; background: #1d3363; margin-bottom: 12px; color: #fff; }
+.dcard h4 { margin: 0 0 6px; color: #fff; } .dcard h4 small { color: #ffd54a; }
+.dcard .q { font-weight: 800; line-height: 1.5; margin-top: 6px; } .dcard .m { color: #ffd54a; font-weight: 800; margin-top: 6px; }
+.dcard .s { color: #b9c9ea; font-size: .8rem; }
 </style>""", unsafe_allow_html=True)
 
 
@@ -53,6 +76,12 @@ class Board:
             self.data.setdefault(desk, {})[key] = value
             if key == "r1":   # ①を入れ直したら、②はやり直し
                 self.data[desk].pop("r2", None)
+            self._save()
+
+    def talk(self, desk, msgs):
+        with self.lock:
+            self.data.setdefault(desk, {}).setdefault("chat", []).extend(msgs)
+            self.data[desk]["chat"] = self.data[desk]["chat"][-40:]
             self._save()
 
     def get(self, desk):
@@ -95,7 +124,7 @@ def make_question(counts, evidence):
 
 
 def make_move(before, after):
-    if not any(d for c, a, b, d in core.moves(VM, before, after)) and before.get("C", 0) == after.get("C", 0):
+    if not core.changes(VM, before, after):
         return {"line": core.move_line(VM, before, after), "by": "table", "why": "動きなし"}   # 動いていなければ、AIに聞かない
     try:
         text = ai.describe_move(VM, before, after, NAMES, core.diff_text(VM, before, after))
@@ -108,13 +137,29 @@ def make_move(before, after):
 
 
 def counts_inputs(prefix, start):
+    """場所ごとの人数（＋−つき）。写真から読んだ数は、session_state から入る。"""
     cols = st.columns(2)
     out = {}
     for i, p in enumerate(VM["places"]):
+        key = f"{prefix}_{p['code']}"
+        if key not in st.session_state:
+            st.session_state[key] = int(start.get(p["code"], 0))
         with cols[i % 2]:
-            out[p["code"]] = int(st.number_input(f"{NAMES[p['code']]}（{p['desc'] if p['kind'] != 'between' else '二人のあいだ'}）",
-                                                 min_value=0, max_value=40, step=1, value=int(start.get(p["code"], 0)), key=f"{prefix}_{p['code']}"))
+            out[p["code"]] = int(st.number_input(NAMES[p["code"]], min_value=0, max_value=40, step=1, key=key))
     return out
+
+
+def shrink(data, mime):
+    """写真を小さくして送る（はやく・安く）。"""
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(data)).convert("RGB")
+        im.thumbnail((2048, 2048))   # 小さくしすぎると、こまの位置がずれる
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=85)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:
+        return data, mime
 
 
 # ---------- 入口 ----------
@@ -148,35 +193,68 @@ def pick_desk():
                 st.rerun()
 
 
+def photo_section(n):
+    with st.container(border=True):
+        st.markdown('<div class="sec" style="margin-top:0">📷 Canva のバリューマップの写真から、人数を入れる（入れなくてもよい）</div>', unsafe_allow_html=True)
+        st.caption("こまを置いた Canva のボードの スクリーンショット（ボード全体）がいちばん正確です。写真でもかまいません。それを入れると、AIが こまの場所を読んで ①② の人数を入れます。"
+                   "まちがいがないか確かめて、直してから進んでください。どの問いを出すかは、AIではなく表で決めます。")
+        up = st.file_uploader("写真をえらぶ", type=["png", "jpg", "jpeg", "heic", "webp"], key=f"photo{n}")
+        if up and st.button("📷 写真を読む", type="primary"):
+            data, mime = shrink(up.getvalue(), up.type or "image/jpeg")
+            with st.spinner("AIが写真を読んでいます…（20秒ほど）"):
+                try:
+                    got = ai.read_photo(LAY, data, mime)   # 見本の絵はわたさない（位置がずれた）
+                except ai.AiError as e:
+                    st.error(f"写真を読めませんでした（{e}）。人数を手で入れてください。")
+                    return
+            c1, c2, _ = core.from_pieces(VM, got, LAY)   # 写真の言葉は使わない（AIが作ってしまうことがあった）
+            for c in CODES:
+                st.session_state[f"r1_{c}"] = c1.get(c, 0)
+                if c2:
+                    st.session_state[f"r2_{c}"] = c2.get(c, 0)
+            st.session_state.photo_note = (f"写真から読みとりました：① {sum(c1.values())}こ" + (f"・② {sum(c2.values())}こ" if c2 else "")
+                                           + "。まちがいがないか確かめてください。")
+            st.rerun()
+
+
 def desk_view():
     n = st.session_state.desk
     rec = board().get(n)
-    top = st.columns([4, 1])
-    top[0].title(f"🗺 机 {n}　「海の命」バリューマップ")
+    top = st.columns([5, 1])
+    top[0].markdown(f'<span class="desk">机 {n}</span>', unsafe_allow_html=True)
     if top[1].button("机をかえる"):
-        st.session_state.pop("desk")
+        for k in list(st.session_state):
+            if k != "role":
+                st.session_state.pop(k)
         st.rerun()
+    if TODAY:
+        st.markdown(f'<div class="today"><small>今日の問い</small><b>{TODAY}</b></div>', unsafe_allow_html=True)
+    photo_section(n)
+    if st.session_state.get("photo_note"):
+        st.success(st.session_state.pop("photo_note"))
 
-    st.subheader("① 話し合いの前：机のみんなは、太一をどこに置いた？")
+    st.markdown('<div class="sec">① はじめの考え</div>', unsafe_allow_html=True)
     left, right = st.columns([3, 2])
-    with left:
+    with right:
         c1 = counts_inputs("r1", (rec.get("r1") or {}).get("counts", {}))
+        st.caption(f"ぜんぶで {sum(c1.values())}人")
         with st.expander("根拠にした言葉も入れる（入れなくてもよい）"):
-            st.caption("番号ごとに、置いた場所と、根拠にした本文の言葉を入れます。同じ言葉でちがう場所に置いた人がいると、それを問いにします。")
+            st.caption("同じ言葉で ちがう場所に置いた人がいると、それを問いにします。")
             evidence = []
             old = {e["no"]: e for e in (rec.get("r1") or {}).get("evidence", [])}
+            opts = [""] + CODES
             for i in range(1, SEATS + 1):
+                if f"ev_p{i}" not in st.session_state:
+                    st.session_state[f"ev_p{i}"] = old.get(i, {}).get("place", "")
+                    st.session_state[f"ev_w{i}"] = old.get(i, {}).get("word", "")
                 a, b = st.columns([2, 3])
-                opts = [""] + CODES
-                place = a.selectbox(f"{i}番の場所", opts, index=opts.index(old.get(i, {}).get("place", "")),
-                                    format_func=lambda c: NAMES.get(c, "（えらばない）"), key=f"ev_p{i}")
-                word = b.text_input(f"{i}番の言葉", value=old.get(i, {}).get("word", ""), max_chars=40, key=f"ev_w{i}")
+                place = a.selectbox(f"{i}番の場所", opts, format_func=lambda c: NAMES.get(c, "（えらばない）"), key=f"ev_p{i}")
+                word = b.text_input(f"{i}番の言葉", max_chars=40, key=f"ev_w{i}")
                 if place and word.strip():
                     evidence.append({"no": i, "place": place, "word": word.strip()})
-    with right:
-        st.markdown(core.triangle_svg(VM, c1), unsafe_allow_html=True)
-        st.caption(f"ぜんぶで {sum(c1.values())}人")
-    if st.button("🎯 問いをもらう", type="primary", disabled=not sum(c1.values())):
+    with left:
+        st.markdown(core.map_html(VM, LAY, c1), unsafe_allow_html=True)
+    if st.button("🎯 この机の問いをもらう", type="primary", disabled=not sum(c1.values())):
         with st.spinner("問いを えらんでいます…"):
             q = make_question(c1, evidence)
         board().put(n, "r1", {"counts": c1, "evidence": evidence, **q, "at": time.time()})
@@ -185,15 +263,15 @@ def desk_view():
     r1 = rec.get("r1")
     if not r1:
         return
-    st.markdown(f'<div class="qcard"><small>{r1["qid"]}・この机への問い</small><p>{r1["question"]}</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="qbox"><small>この机の問い（{r1["qid"]}）</small><p>{r1["question"]}</p></div>', unsafe_allow_html=True)
 
-    st.subheader("② 話し合いの後：もう一度、太一をどこに置いた？")
+    st.markdown('<div class="sec">② 話し合ったあとの考え</div>', unsafe_allow_html=True)
     left, right = st.columns([3, 2])
-    with left:
-        c2 = counts_inputs("r2", (rec.get("r2") or {}).get("counts", r1["counts"]))
     with right:
-        st.markdown(core.triangle_svg(VM, c2), unsafe_allow_html=True)
+        c2 = counts_inputs("r2", (rec.get("r2") or {}).get("counts", r1["counts"]))
         st.caption(f"ぜんぶで {sum(c2.values())}人")
+    with left:
+        st.markdown(core.map_html(VM, LAY, c2), unsafe_allow_html=True)
     if st.button("➡ ①から②への動きを見る", type="primary", disabled=not sum(c2.values())):
         with st.spinner("動きを まとめています…"):
             m = make_move(r1["counts"], c2)
@@ -201,7 +279,30 @@ def desk_view():
         st.rerun()
     r2 = rec.get("r2")
     if r2:
-        st.markdown(f'<div class="mline">➡ {r2["line"]}<br><small>{core.diff_text(VM, r1["counts"], r2["counts"])}</small></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="mline">➡ {r2["line"]}<small>{core.diff_text(VM, r1["counts"], r2["counts"])}</small></div>', unsafe_allow_html=True)
+
+    wall(n, rec, r1)
+
+
+def wall(n, rec, r1):
+    st.markdown('<div class="sec">💬 壁打ち（AIと話して、考えを深める）</div>', unsafe_allow_html=True)
+    st.caption("AIは答えや「正しい位置」は言いません。根拠や、ほかの角からの見え方を問い返します。")
+    talk = rec.get("chat", [])
+    for m in talk[-12:]:
+        with st.chat_message("user" if m["role"] == "user" else "assistant", avatar="🧑‍🏫" if m["role"] == "user" else "🗺"):
+            st.write(m["text"])
+    said = st.chat_input("この机の考えや、聞いてみたいことを書いてください")
+    if said:
+        said = said.strip()[:300]
+        system = core.wall_system(VM, r1["question"], (rec.get("r2") or r1)["counts"], r1.get("evidence", []))
+        with st.spinner("考えています…"):
+            try:
+                out = core.check_wall(ai.chat(system, (talk + [{"role": "user", "text": said}])[-12:]))
+            except ai.AiError:
+                out = None
+        board().talk(n, [{"role": "user", "text": said, "at": time.time()},
+                         {"role": "ai", "text": out or "うまく答えられませんでした。もう一度、問いにもどって、根拠の言葉をさがしてみましょう。", "at": time.time()}])
+        st.rerun()
 
 
 # ---------- 先生の画面 ----------
@@ -211,15 +312,14 @@ def teacher_board():
     tot1 = {c: sum((d.get("r1") or {}).get("counts", {}).get(c, 0) for d in data.values()) for c in CODES}
     # ②がまだの机は、①のまま数える（まだ入れていない机を「動いた」と見ないように）
     tot2 = {c: sum((d.get("r2") or d.get("r1") or {}).get("counts", {}).get(c, 0) for d in data.values()) for c in CODES}
-    a, b, c = st.columns([1, 1, 2])
-    a.markdown("**会場ぜんたい ①**" + core.triangle_svg(VM, tot1, 220), unsafe_allow_html=True)
-    b.markdown("**会場ぜんたい ②**（②がまだの机は①のまま）" + core.triangle_svg(VM, tot2, 220), unsafe_allow_html=True)
+    a, b, c = st.columns([2, 2, 2])
+    a.markdown('<div class="sec">会場ぜんたい ①</div>' + core.map_html(VM, LAY, tot1), unsafe_allow_html=True)
+    b.markdown('<div class="sec">会場ぜんたい ②</div>' + core.map_html(VM, LAY, tot2), unsafe_allow_html=True)
     with c:
         st.markdown(f"**入れた机：** {sum(1 for d in data.values() if d.get('r1'))} / {DESKS}　**②まで：** {sum(1 for d in data.values() if d.get('r2'))}")
         if any(d.get("r2") for d in data.values()):
             st.markdown("**① から ② への動き（会場ぜんたい）：** " + core.move_line(VM, tot1, tot2))
-        st.caption(f"AI：{ai.provider()}　（5秒ごとに新しくなります）")
-    st.divider()
+        st.caption(f"②がまだの机は、①のまま数えています。AI：{ai.provider()}（5秒ごとに新しくなります）")
     for row in range(2):
         cols = st.columns(5)
         for i in range(5):
@@ -228,18 +328,27 @@ def teacher_board():
             r1, r2 = d.get("r1"), d.get("r2")
             with cols[i]:
                 if not r1:
-                    st.markdown(f'<div class="dcard"><h4>机 {n}</h4><small>まだ</small></div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="dcard"><h4>机 {n}</h4><span class="s">まだ</span></div>', unsafe_allow_html=True)
                     continue
-                tri = ('<div style="display:flex;gap:4px"><div style="flex:1"><small>①</small>' + core.triangle_svg(VM, r1["counts"], 120) + "</div>"
-                       + ('<div style="flex:1"><small>②</small>' + core.triangle_svg(VM, r2["counts"], 120) + "</div>" if r2 else "") + "</div>")
-                st.markdown(f'<div class="dcard"><h4>机 {n}　<small>{r1["qid"]}{"・AI" if r1["by"] == "ai" else ""}</small></h4>{tri}'
+                maps = core.map_html(VM, LAY, r1["counts"], small=True, mark="①") + (
+                    '<div style="height:6px"></div>' + core.map_html(VM, LAY, r2["counts"], small=True, mark="②") if r2 else "")
+                talks = sum(1 for m in d.get("chat", []) if m["role"] == "user")
+                st.markdown(f'<div class="dcard"><h4>机 {n}　<small>{r1["qid"]}{"・AI" if r1["by"] == "ai" else ""}</small></h4>{maps}'
                             f'<div class="q">{r1["question"]}</div>'
-                            + (f'<div class="m">➡ {r2["line"]}</div><small>{core.diff_text(VM, r1["counts"], r2["counts"])}</small>' if r2 else "<small>②はまだ</small>") + "</div>", unsafe_allow_html=True)
+                            + (f'<div class="m">➡ {r2["line"]}</div>' if r2 else '<div class="s">②はまだ</div>')
+                            + (f'<div class="s">💬 壁打ち {talks}回</div>' if talks else "") + "</div>", unsafe_allow_html=True)
 
 
 def teacher_view():
     st.title("🗺 先生用：10机のバリューマップ")
     teacher_board()
+    data = board().all()
+    talked = [n for n in sorted(data) if data[n].get("chat")]
+    if talked:
+        with st.expander("💬 机ごとの壁打ちを読む"):
+            n = st.selectbox("机", talked, format_func=lambda x: f"机 {x}")
+            for m in data[n]["chat"]:
+                st.markdown(f"{'🧑‍🏫' if m['role'] == 'user' else '🗺'} {m['text']}")
     with st.expander("机の入力をぜんぶ消す（研究会のはじめに）"):
         if st.checkbox("ほんとうに消す") and st.button("ぜんぶ消す"):
             board().clear()

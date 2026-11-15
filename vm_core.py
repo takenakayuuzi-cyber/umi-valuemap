@@ -246,3 +246,127 @@ def triangle_svg(vm, counts, width=300):
             dots += f'<text x="{x}" y="{y + 6}" text-anchor="middle" font-size="17" font-weight="900" fill="#fff">{n}</text>'
     return (f'<svg viewBox="0 -6 300 304" width="{width}" style="max-width:100%;height:auto;font-family:sans-serif" role="img">'
             f'<polygon points="{tri}" fill="rgba(20,169,238,.06)" stroke="#b9dff5" stroke-width="3" stroke-linejoin="round"/>{label}{dots}</svg>')
+
+
+# ---------- Canva のバリューマップの絵の上に、人数の丸を重ねる ----------
+def load_layout(vm, name="海の命"):
+    """絵と、丸を出す場所（data/<教材>_マップ.json）。なければ None（三角形の絵を使う）。"""
+    path = os.path.join(HERE, "data", f"{name}_マップ.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        lay = json.load(f)
+    import base64
+    for key in ("image", "image_small"):
+        with open(os.path.join(HERE, "data", lay[key]), "rb") as f:
+            lay[key + "_b64"] = base64.b64encode(f.read()).decode()
+    with open(os.path.join(HERE, "data", lay["image"]), "rb") as f:
+        lay["image_bytes"] = f.read()
+    lay["place_names"] = {c: short(vm, c) for c in places_of(vm)}
+    return lay
+
+
+def map_html(vm, lay, counts, small=False, mark=""):
+    """絵の上に、場所ごとの人数を丸で出す（mark は左上の小さな文字。①・②など）。"""
+    if not lay:
+        return triangle_svg(vm, counts, 220 if small else 360)
+    W, H = lay["size"]
+    color = {"corner": "#ffd54a", "center": "#8fdcff", "between": "#ff9ccb"}
+    dots = ""
+    for p in vm["places"]:
+        n = int(counts.get(p["code"], 0) or 0)
+        if not n:
+            continue
+        x, y = lay["anchors"][p["code"]]
+        size = 4.2 + 2.0 * n ** 0.5   # 地図の横はばに対する割合（大きい地図でも小さい地図でも同じ見え方）
+        dots += (f'<div style="position:absolute;left:{x / W * 100:.2f}%;top:{y / H * 100:.2f}%;width:{size:.1f}cqw;height:{size:.1f}cqw;'
+                 f'transform:translate(-50%,-50%);border-radius:50%;background:{color[p["kind"]]};color:#14254a;display:flex;'
+                 f'align-items:center;justify-content:center;font-weight:900;font-size:max(10px,{size * 0.5:.1f}cqw);'
+                 f'box-shadow:0 0 0 0.35cqw rgba(255,255,255,.9),0 0.6cqw 1.6cqw rgba(0,0,0,.35)">{n}</div>')
+    img = lay["image_small_b64" if small else "image_b64"]
+    tag = f'<div style="position:absolute;left:8px;top:6px;color:#ffd54a;font-weight:900">{mark}</div>' if mark else ""
+    return (f'<div style="position:relative;width:100%;container-type:inline-size;border-radius:{10 if small else 18}px;overflow:hidden;line-height:1">'
+            f'<img src="data:image/jpeg;base64,{img}" style="width:100%;display:block">{tag}{dots}</div>')
+
+
+def where(lay, x, y):
+    """ボードの上の位置（写真の左上0・右下1000）が、どの場所か。AIではなく、Y字の線の形で決める。
+    右がわの置き場（まだ置いていない こま）なら None。"""
+    import math
+    b = lay["board"]
+    W, H = b["size"]
+    px, py = x / 1000 * W, y / 1000 * H
+    if px > b["map_width"]:
+        return None
+    cx, cy = b["center"]
+    if math.hypot(px - cx, py - cy) <= b["radius"]:
+        return "C"
+    for code, (ex, ey) in b["lines"].items():   # 線の上・そば
+        dx, dy = ex - cx, ey - cy
+        t = max(0, min(1, ((px - cx) * dx + (py - cy) * dy) / (dx * dx + dy * dy)))
+        if math.hypot(px - (cx + t * dx), py - (cy + t * dy)) <= b["near"]:
+            return code
+    ang = lambda ex, ey: math.atan2(ey - cy, ex - cx) % (2 * math.pi)
+    a = ang(px, py)
+    lines = sorted(((ang(*e), code) for code, e in b["lines"].items()))
+    for i, (a1, c1) in enumerate(lines):   # となりあう2本の線のあいだ ＝ 2本に共通の角
+        a2, c2 = lines[(i + 1) % len(lines)]
+        inside = a1 <= a < a2 if a1 < a2 else (a >= a1 or a < a2)
+        if inside:
+            common = set(c1) & set(c2)
+            return common.pop() if common else None
+    return None
+
+
+def from_pieces(vm, data, lay=None):
+    """写真から読んだ こま を、①②の人数と根拠の言葉にする（読めないものは すてる）。
+    位置（x, y）があれば、場所はプログラムが線の形で決める。"""
+    P = places_of(vm)
+    seen, counts, places = set(), {1: {}, 2: {}}, {1: {}, 2: {}}
+    for x in (data or {}).get("pieces") or []:
+        try:
+            rnd, no = int(x.get("round")), int(x.get("no"))
+            if lay and lay.get("board") and x.get("x") is not None and x.get("y") is not None:
+                place = where(lay, float(x["x"]), float(x["y"]))
+                if place is None:
+                    continue
+            else:
+                place = str(x.get("place"))
+        except (TypeError, ValueError):
+            continue
+        if rnd not in (1, 2) or not 1 <= no <= 8 or place not in P or (rnd, no) in seen:
+            continue
+        seen.add((rnd, no))
+        counts[rnd][place] = counts[rnd].get(place, 0) + 1
+        places[rnd][no] = place
+    words = []
+    for w in (data or {}).get("words") or []:
+        try:
+            no, word = int(w.get("no")), str(w.get("word") or "").strip()[:40]
+        except (TypeError, ValueError):
+            continue
+        if word and 1 <= no <= 8 and no in places[1]:
+            words.append({"no": no, "place": places[1][no], "word": word})
+    return counts[1], counts[2], words
+
+
+# ---------- 壁打ち ----------
+def wall_system(vm, question, counts, evidence):
+    """壁打ちのAIへの指示（設計メモの「AIに守らせる決まり」＋ この机のようす）。"""
+    P = places_of(vm)
+    where = "、".join(f"{short(vm, c)} {n}人" for c, n in counts.items() if n)
+    words = "、".join(f"{e['no']}番「{e['word']}」（{short(vm, e['place'])}）" for e in evidence) or "なし"
+    rules = [r for r in vm["ai_rules"] if "6年生" not in r] + [
+        "参加者は、物語の読みを話し合っている先生たちです。机のみんなの考えを深めるための壁打ち相手になってください。",
+        "答えや「正しい位置」は言わず、根拠になる言葉や、ほかの角から見たときの見え方を問い返してください。",
+        f"この机の問い：{question}", f"この机の人数：{where}", f"この机が入れた根拠の言葉：{words}"]
+    return "\n".join(rules)
+
+
+def check_wall(out):
+    """壁打ちの返事：正しさを言わない・2文まで（長ければ2文で切る）。"""
+    if not out:
+        return None
+    if any(w in out for w in ("正解は", "正しいのは", "答えは")):
+        return None
+    return "".join(sentences(out)[:2]) or out[:120]
