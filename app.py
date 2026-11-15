@@ -118,8 +118,16 @@ class Board:
 
 
 @st.cache_resource
-def board():
+def _board(version):
     return Board()
+
+
+def board():
+    """机の記録の置き場所。プログラムの Board を直したら（version が変わったら）作りなおす。
+    記録はファイル（.store/board.json）から読みなおすので消えない。古い置き場所を使い続けてエラーになったため（2026-11-15）。"""
+    import hashlib
+    import inspect
+    return _board(hashlib.md5(inspect.getsource(Board).encode()).hexdigest())
 
 
 # ---------- 問いと動き（表で決めて、AIは言葉を整えるだけ） ----------
