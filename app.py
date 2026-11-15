@@ -41,7 +41,7 @@ TODAY = (LAY or {}).get("today", "")
 
 # 白い画面（ドクソウと同じ方針。ダークにしない）。Canva のバリューマップの絵（紺）は、白い画面の中のカードとして置く
 st.markdown("""<style>
-.block-container { padding-top: 4.2rem; max-width: 1240px; }   /* 上のバー（GitHub のマークなど）と重ならないように */
+.block-container { padding-top: 4.2rem; max-width: 1400px; }   /* 上のバー（GitHub のマークなど）と重ならないように */
 div.stButton > button { min-height: 3.1rem; font-size: 1.1rem; font-weight: 800; border-radius: 999px; }
 div.stButton > button p { color: inherit !important; font-weight: 800; }   /* ボタンの文字は、ボタンの色に合わせる */
 div.stButton > button[kind="primary"] { background: linear-gradient(180deg, #3dbdf6, #14a9ee); color: #fff; border: 0; }
@@ -321,10 +321,37 @@ def teacher_board():
     tot1 = {c: sum((d.get("r1") or {}).get("counts", {}).get(c, 0) for d in data.values()) for c in CODES}
     # ②がまだの机は、①のまま数える（まだ入れていない机を「動いた」と見ないように）
     tot2 = {c: sum((d.get("r2") or d.get("r1") or {}).get("counts", {}).get(c, 0) for d in data.values()) for c in CODES}
-    a, b, c = st.columns([2, 2, 2])
-    a.markdown('<div class="sec">会場ぜんたい ①</div>' + core.map_html(VM, LAY, tot1, rnd=1), unsafe_allow_html=True)
-    b.markdown('<div class="sec">会場ぜんたい ②</div>' + core.map_html(VM, LAY, tot2, rnd=2), unsafe_allow_html=True)
-    with c:
+    # 「大きく見せる」を押すと、そのマップだけを画面いっぱいに（スクリーンに映して会場ぜんたいで見る）
+    big = st.session_state.get("big")
+    title = {"1": "会場ぜんたい ①（話し合いの前）", "2": "会場ぜんたい ②（話し合いの後）"}
+    if big:
+        top = st.columns([4, 1])
+        top[0].markdown(f'<div class="sec" style="font-size:1.8rem">{"会場ぜんたい ①→②" if big == "both" else title[big]}</div>', unsafe_allow_html=True)
+        if top[1].button("← もどる", use_container_width=True):
+            st.session_state.big = None
+            st.rerun(scope="fragment")
+        fit = lambda html: f'<div style="max-width:calc(74vh * 1420 / 1080);margin:0 auto">{html}</div>'   # 画面の高さに おさまる大きさ
+        if big == "both":
+            a, b = st.columns(2)
+            a.markdown('<div class="sec">①（話し合いの前）</div>' + core.map_html(VM, LAY, tot1, rnd=1), unsafe_allow_html=True)
+            b.markdown('<div class="sec">②（話し合いの後）</div>' + core.map_html(VM, LAY, tot2, rnd=2), unsafe_allow_html=True)
+        else:
+            st.markdown(fit(core.map_html(VM, LAY, tot1 if big == "1" else tot2, rnd=int(big))), unsafe_allow_html=True)
+        if any(d.get("r2") for d in data.values()):
+            st.markdown(f'<div class="mline">➡ {core.move_line(VM, tot1, tot2)}</div>', unsafe_allow_html=True)
+        st.caption(f"入れた机 {sum(1 for d in data.values() if d.get('r1'))} / {DESKS}・②まで {sum(1 for d in data.values() if d.get('r2'))}（5秒ごとに新しくなります）")
+        return
+    a, b = st.columns(2)
+    a.markdown('<div class="sec">' + title["1"] + '</div>' + core.map_html(VM, LAY, tot1, rnd=1), unsafe_allow_html=True)
+    b.markdown('<div class="sec">' + title["2"] + '</div>' + core.map_html(VM, LAY, tot2, rnd=2), unsafe_allow_html=True)
+    for col, key, label in ((a, "1", "🔍 ①を大きく見せる"), (b, "2", "🔍 ②を大きく見せる")):
+        if col.button(label, key=f"big{key}", use_container_width=True):
+            st.session_state.big = key
+            st.rerun(scope="fragment")
+    if st.button("🔍 ①と②をならべて大きく見せる", use_container_width=True):
+        st.session_state.big = "both"
+        st.rerun(scope="fragment")
+    with st.container():
         st.markdown(f"**入れた机：** {sum(1 for d in data.values() if d.get('r1'))} / {DESKS}　**②まで：** {sum(1 for d in data.values() if d.get('r2'))}")
         if any(d.get("r2") for d in data.values()):
             st.markdown("**① から ② への動き（会場ぜんたい）：** " + core.move_line(VM, tot1, tot2))
