@@ -1,14 +1,13 @@
 """研究会用「海の命」バリューマップの部屋（Streamlit Community Cloud ＋ Gemini）。
 
 ・入口のパスコード（参加者用・先生用）と Gemini の APIキーは、Streamlit の Secrets に入れる（プログラムに書かない）
-・机（1〜10）：📷 Canva のバリューマップの写真 → AIが こまの場所を読んで人数を入れる（机が確かめて直す）
+・机（1〜20。Secrets の DESKS で変えられる）：📷 Canva のバリューマップの写真 → AIが こまの場所を読んで人数を入れる（机が確かめて直す）
               ① 話し合いの前の人数 → 問い（表と判定の決まりで選ぶ。Q9・Q10 だけAIが言葉を整える）
               ② 話し合いの後の人数 → ①から②への動きを1行（AI。合わなければ人数の差からプログラムが1行）
               💬 壁打ち → 答えは言わず、問い返すAI（2文まで）
-・先生：10机のマップ・問い・動き・壁打ちの回数を一覧（5秒ごと）。ほかの机の入力は、先生の画面だけで見える
+・先生：机のマップ・問い・動き・壁打ちの回数を一覧（5秒ごと）。ほかの机の入力は、先生の画面だけで見える
 ・机の入力は、このアプリの中だけに置く（アプリが止まると消える。研究会の1日用）
 """
-import io
 import json
 import os
 import threading
@@ -25,7 +24,8 @@ VM = core.load(MATERIAL)
 P = core.places_of(VM)
 CODES = [p["code"] for p in VM["places"]]
 NAMES = {c: core.short(VM, c) for c in CODES}
-DESKS, SEATS = 10, 8
+DESKS = int(ai.setting("DESKS", "20") or 20)   # 机の数（1つの机に4人 × 20 ＝ 80人）。Secrets の DESKS で変えられる
+SEATS = 8   # こまの番号（Canva のボードに合わせて 1〜8。4人の机は 1〜4 だけ置く）
 
 
 @st.cache_resource
@@ -134,30 +134,33 @@ def make_move(before, after):
     return {"line": core.move_line(VM, before, after), "by": "table", "why": why}
 
 
-def counts_inputs(prefix, start):
-    """場所ごとの人数（＋−つき）。写真から読んだ数は、session_state から入る。"""
-    cols = st.columns(2)
-    out = {}
-    for i, p in enumerate(VM["places"]):
-        key = f"{prefix}_{p['code']}"
+def piece_inputs(rnd, start, words=None):
+    """太一のこま（番号1〜8）ごとに、どこに置いたかを選ぶ。words があれば、こまごとに根拠の言葉も入れる。
+    写真から読んだ場所は、session_state から入る。返すもの：({番号: 場所}, [根拠の言葉])"""
+    opts = [""] + CODES
+    pieces, evidence = {}, []
+    for no in range(1, SEATS + 1):
+        key = f"p{rnd}_{no}"
         if key not in st.session_state:
-            st.session_state[key] = int(start.get(p["code"], 0))
-        with cols[i % 2]:
-            out[p["code"]] = int(st.number_input(NAMES[p["code"]], min_value=0, max_value=40, step=1, key=key))
-    return out
-
-
-def shrink(data, mime):
-    """写真を小さくして送る（はやく・安く）。"""
-    try:
-        from PIL import Image
-        im = Image.open(io.BytesIO(data)).convert("RGB")
-        im.thumbnail((2048, 2048))   # 小さくしすぎると、こまの位置がずれる
-        buf = io.BytesIO()
-        im.save(buf, "JPEG", quality=85)
-        return buf.getvalue(), "image/jpeg"
-    except Exception:
-        return data, mime
+            st.session_state[key] = start.get(str(no), start.get(no, ""))
+        cols = st.columns([1, 3, 4] if words is not None else [1, 4])
+        img = (LAY or {}).get("pieces", {}).get((rnd, no))
+        if img:
+            cols[0].image(img, width=46)
+        else:
+            cols[0].markdown(f"**{no}**")
+        place = cols[1].selectbox(f"{'①' if rnd == 1 else '②'}{no}", opts, format_func=lambda c: NAMES.get(c, "置かない"),
+                                  key=key, label_visibility="collapsed")
+        if place:
+            pieces[no] = place
+        if words is not None:
+            wkey = f"w{rnd}_{no}"
+            if wkey not in st.session_state:
+                st.session_state[wkey] = words.get(no, "")
+            word = cols[2].text_input(f"{no}の言葉", key=wkey, max_chars=40, label_visibility="collapsed", placeholder="根拠の言葉（なくてもよい）")
+            if place and word.strip():
+                evidence.append({"no": no, "place": place, "word": word.strip()})
+    return pieces, evidence
 
 
 # ---------- 入口 ----------
@@ -182,10 +185,12 @@ def login():
 
 def pick_desk():
     st.title("🗺 机の番号をえらんでください")
-    for row in range(2):
+    for row in range((DESKS + 4) // 5):
         cols = st.columns(5)
         for i in range(5):
             n = row * 5 + i + 1
+            if n > DESKS:
+                break
             if cols[i].button(f"机 {n}", key=f"desk{n}", use_container_width=True):
                 st.session_state.desk = n
                 st.rerun()
@@ -198,19 +203,20 @@ def photo_section(n):
                    "まちがいがないか確かめて、直してから進んでください。どの問いを出すかは、AIではなく表で決めます。")
         up = st.file_uploader("写真をえらぶ", type=["png", "jpg", "jpeg", "heic", "webp"], key=f"photo{n}")
         if up and st.button("📷 写真を読む", type="primary"):
-            data, mime = shrink(up.getvalue(), up.type or "image/jpeg")
+            data = core.prepare_photo(up.getvalue(), LAY)   # 紺のボードだけを切り出して、もとの大きさに
             with st.spinner("AIが写真を読んでいます…（20秒ほど）"):
                 try:
-                    got = ai.read_photo(LAY, data, mime)   # 見本の絵はわたさない（位置がずれた）
+                    got = ai.read_photo(LAY, data, "image/jpeg")   # 見本の絵はわたさない（位置がずれた）
                 except ai.AiError as e:
                     st.error(f"写真を読めませんでした（{e}）。人数を手で入れてください。")
                     return
-            c1, c2, _ = core.from_pieces(VM, got, LAY)   # 写真の言葉は使わない（AIが作ってしまうことがあった）
-            for c in CODES:
-                st.session_state[f"r1_{c}"] = c1.get(c, 0)
-                if c2:
-                    st.session_state[f"r2_{c}"] = c2.get(c, 0)
-            st.session_state.photo_note = (f"写真から読みとりました：① {sum(c1.values())}こ" + (f"・② {sum(c2.values())}こ" if c2 else "")
+            c1, c2 = core.photo_places(VM, got, LAY)   # 写真の言葉は使わない（AIが作ってしまうことがあった）
+            for no in range(1, SEATS + 1):
+                st.session_state[f"p1_{no}"] = c1.get(no, "")
+                st.session_state.pop(f"p2_{no}", None)
+            # ②のらんは、①の問いが出るまで画面にない（Streamlit は、画面にないらんの値を すててしまう）ので、別に覚えておく
+            st.session_state.photo_p2 = {str(k): v for k, v in c2.items()} if c2 else None
+            st.session_state.photo_note = (f"写真から読みとりました：① {len(c1)}こ" + (f"・② {len(c2)}こ" if c2 else "")
                                            + "。まちがいがないか確かめてください。")
             st.rerun()
 
@@ -231,31 +237,20 @@ def desk_view():
     if st.session_state.get("photo_note"):
         st.success(st.session_state.pop("photo_note"))
 
-    st.markdown('<div class="sec">① はじめの考え</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">① はじめの考え：太一のこまを、どこに置いた？</div>', unsafe_allow_html=True)
+    old1 = rec.get("r1") or {}
     left, right = st.columns([3, 2])
     with right:
-        c1 = counts_inputs("r1", (rec.get("r1") or {}).get("counts", {}))
-        st.caption(f"ぜんぶで {sum(c1.values())}人")
-        with st.expander("根拠にした言葉も入れる（入れなくてもよい）"):
-            st.caption("同じ言葉で ちがう場所に置いた人がいると、それを問いにします。")
-            evidence = []
-            old = {e["no"]: e for e in (rec.get("r1") or {}).get("evidence", [])}
-            opts = [""] + CODES
-            for i in range(1, SEATS + 1):
-                if f"ev_p{i}" not in st.session_state:
-                    st.session_state[f"ev_p{i}"] = old.get(i, {}).get("place", "")
-                    st.session_state[f"ev_w{i}"] = old.get(i, {}).get("word", "")
-                a, b = st.columns([2, 3])
-                place = a.selectbox(f"{i}番の場所", opts, format_func=lambda c: NAMES.get(c, "（えらばない）"), key=f"ev_p{i}")
-                word = b.text_input(f"{i}番の言葉", max_chars=40, key=f"ev_w{i}")
-                if place and word.strip():
-                    evidence.append({"no": i, "place": place, "word": word.strip()})
+        st.caption("こまごとに置いた場所を選びます。根拠にした本文の言葉も入れられます（同じ言葉で ちがう場所に置いた人がいると、それを問いにします）。")
+        p1, evidence = piece_inputs(1, old1.get("pieces", {}), {e["no"]: e["word"] for e in old1.get("evidence", [])})
+    c1 = core.counts_of(p1)
     with left:
-        st.markdown(core.map_html(VM, LAY, c1), unsafe_allow_html=True)
-    if st.button("🎯 この机の問いをもらう", type="primary", disabled=not sum(c1.values())):
+        st.markdown(core.map_html(VM, LAY, c1, pieces=p1, rnd=1), unsafe_allow_html=True)
+        st.caption(f"置いたこま {len(p1)}こ")
+    if st.button("🎯 この机の問いをもらう", type="primary", disabled=not p1):
         with st.spinner("問いを えらんでいます…"):
             q = make_question(c1, evidence)
-        board().put(n, "r1", {"counts": c1, "evidence": evidence, **q, "at": time.time()})
+        board().put(n, "r1", {"pieces": {str(k): v for k, v in p1.items()}, "counts": c1, "evidence": evidence, **q, "at": time.time()})
         st.rerun()
 
     r1 = rec.get("r1")
@@ -263,17 +258,18 @@ def desk_view():
         return
     st.markdown(f'<div class="qbox"><small>この机の問い（{r1["qid"]}）</small><p>{r1["question"]}</p></div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="sec">② 話し合ったあとの考え</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">② 話し合ったあとの考え：②のこまを、どこに置いた？（①は動かさない）</div>', unsafe_allow_html=True)
     left, right = st.columns([3, 2])
     with right:
-        c2 = counts_inputs("r2", (rec.get("r2") or {}).get("counts", r1["counts"]))
-        st.caption(f"ぜんぶで {sum(c2.values())}人")
+        p2, _ = piece_inputs(2, (rec.get("r2") or {}).get("pieces") or st.session_state.get("photo_p2") or r1.get("pieces", {}))
+    c2 = core.counts_of(p2)
     with left:
-        st.markdown(core.map_html(VM, LAY, c2), unsafe_allow_html=True)
-    if st.button("➡ ①から②への動きを見る", type="primary", disabled=not sum(c2.values())):
+        st.markdown(core.map_html(VM, LAY, c2, pieces=p2, rnd=2), unsafe_allow_html=True)
+        st.caption(f"置いたこま {len(p2)}こ")
+    if st.button("➡ ①から②への動きを見る", type="primary", disabled=not p2):
         with st.spinner("動きを まとめています…"):
             m = make_move(r1["counts"], c2)
-        board().put(n, "r2", {"counts": c2, **m, "at": time.time()})
+        board().put(n, "r2", {"pieces": {str(k): v for k, v in p2.items()}, "counts": c2, **m, "at": time.time()})
         st.rerun()
     r2 = rec.get("r2")
     if r2:
@@ -317,12 +313,14 @@ def teacher_board():
         st.markdown(f"**入れた机：** {sum(1 for d in data.values() if d.get('r1'))} / {DESKS}　**②まで：** {sum(1 for d in data.values() if d.get('r2'))}")
         if any(d.get("r2") for d in data.values()):
             st.markdown("**① から ② への動き（会場ぜんたい）：** " + core.move_line(VM, tot1, tot2))
-        st.caption(f"②がまだの机は、①のまま数えています。AI：{ai.provider()}（5秒ごとに新しくなります）")
+        st.caption(f"②がまだの机は、①のまま数えています。AI：{ai.provider()} {ai.model_name()}（5秒ごとに新しくなります）")
     st.divider()
-    for row in range(2):
+    for row in range((DESKS + 4) // 5):
         cols = st.columns(5)
         for i in range(5):
             n = row * 5 + i + 1
+            if n > DESKS:
+                break
             d = data.get(n, {})
             r1, r2 = d.get("r1"), d.get("r2")
             with cols[i]:
@@ -339,7 +337,7 @@ def teacher_board():
 
 
 def teacher_view():
-    st.title("🗺 先生用：10机のバリューマップ")
+    st.title(f"🗺 先生用：{DESKS}机のバリューマップ")
     teacher_board()
     data = board().all()
     talked = [n for n in sorted(data) if data[n].get("chat")]

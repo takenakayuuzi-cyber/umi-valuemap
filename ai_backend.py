@@ -28,6 +28,11 @@ def setting(key, default=""):
     return os.environ.get(key, default)
 
 
+def model_name():
+    """先生の画面に出す、いま使っているモデル。"""
+    return _auto_model.get("pick") or setting("GEMINI_MODEL", "") if provider() == "gemini" else setting("OLLAMA_MODEL", "qwen3.6:35b")
+
+
 def provider():
     return setting("AI_PROVIDER", "gemini").lower()
 
@@ -40,15 +45,7 @@ def _gemini(system, user):
         raise AiError("GEMINI_API_KEY が Secrets にありません")
     client = genai.Client(api_key=key)
     cfg = dict(system_instruction=system, temperature=0.3, max_output_tokens=300)
-    try:   # 考えこむ時間を0にして、速く答えさせる（使えないモデルなら、つけずに聞く）
-        res = client.models.generate_content(model=setting("GEMINI_MODEL", "gemini-flash-latest"), contents=user,
-                                             config=types.GenerateContentConfig(**cfg, thinking_config=types.ThinkingConfig(thinking_budget=0)))
-    except Exception as e:
-        if "thinking" not in str(e).lower():
-            raise
-        res = client.models.generate_content(model=setting("GEMINI_MODEL", "gemini-flash-latest"), contents=user,
-                                             config=types.GenerateContentConfig(**cfg))
-    return res.text or ""
+    return _generate(client, user, cfg).text or ""   # 考えこむ時間を0にして、速く答えさせる
 
 
 def _ollama(system, user, timeout):
@@ -59,6 +56,51 @@ def _ollama(system, user, timeout):
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as res:
         return json.load(res)["message"]["content"]
+
+
+_auto_model = {}
+
+
+def gemini_model(client, failed=False):
+    """使う Gemini のモデル。Secrets の GEMINI_MODEL が使えないときは、使えるものから flash を自動で選ぶ。"""
+    name = setting("GEMINI_MODEL", "")
+    if name and not failed and name not in _auto_model.get("bad", ()):
+        return name
+    if failed and name:
+        _auto_model.setdefault("bad", set()).add(name)
+    if "pick" not in _auto_model:
+        import re as _re
+        names = []
+        for m in client.models.list():
+            acts = getattr(m, "supported_actions", None) or []
+            n = (m.name or "").replace("models/", "")
+            if "generateContent" in acts and "flash" in n and not any(w in n for w in ("lite", "image", "tts", "live", "audio", "embedding", "exp")):
+                names.append(n)
+        ver = lambda n: [float(x) for x in _re.findall(r"\d+(?:\.\d+)?", n)[:1]] or [0]
+        names.sort(key=lambda n: (ver(n), "preview" not in n, "latest" not in n), reverse=True)
+        if not names:
+            raise AiError("使える Gemini のモデルが見つかりません")
+        _auto_model["pick"] = names[0]
+    return _auto_model["pick"]
+
+
+def _generate(client, contents, cfg):
+    """モデル名がない（404）ときは、自動で選びなおして もう一度。考えこむ設定が使えないモデルなら、つけずに。"""
+    from google.genai import types
+    for attempt in range(2):
+        model = gemini_model(client, failed=attempt > 0)
+        try:
+            try:
+                return client.models.generate_content(model=model, contents=contents,
+                                                      config=types.GenerateContentConfig(**cfg, thinking_config=types.ThinkingConfig(thinking_budget=0)))
+            except Exception as e:
+                if "thinking" not in str(e).lower():
+                    raise
+                return client.models.generate_content(model=model, contents=contents, config=types.GenerateContentConfig(**cfg))
+        except Exception as e:
+            if attempt == 0 and ("404" in str(e) or "NOT_FOUND" in str(e)):
+                continue
+            raise
 
 
 def _gemini_full(system, contents, json_mode=False):
@@ -72,15 +114,7 @@ def _gemini_full(system, contents, json_mode=False):
     cfg = dict(system_instruction=system, temperature=0.2 if json_mode else 0.5, max_output_tokens=1500 if json_mode else 300)
     if json_mode:
         cfg["response_mime_type"] = "application/json"
-    model = setting("GEMINI_MODEL", "gemini-flash-latest")
-    try:
-        res = client.models.generate_content(model=model, contents=contents,
-                                             config=types.GenerateContentConfig(**cfg, thinking_config=types.ThinkingConfig(thinking_budget=0)))
-    except Exception as e:
-        if "thinking" not in str(e).lower():
-            raise
-        res = client.models.generate_content(model=model, contents=contents, config=types.GenerateContentConfig(**cfg))
-    return res.text or ""
+    return _generate(client, contents, cfg).text or ""
 
 
 def _ollama_full(system, messages, timeout, json_mode=False):

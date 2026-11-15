@@ -262,15 +262,45 @@ def load_layout(vm, name="海の命"):
             lay[key + "_b64"] = base64.b64encode(f.read()).decode()
     with open(os.path.join(HERE, "data", lay["image"]), "rb") as f:
         lay["image_bytes"] = f.read()
+    lay["pieces"] = {}   # 太一のこま（①1〜8・②1〜8）の絵
+    for rnd in (1, 2):
+        for no in range(1, 9):
+            path = os.path.join(HERE, "data", "pieces", f"p{rnd}_{no}.png")
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    lay["pieces"][(rnd, no)] = f.read()
+                    lay["pieces"][f"{rnd}_{no}"] = base64.b64encode(lay["pieces"][(rnd, no)]).decode()
     lay["place_names"] = {c: short(vm, c) for c in places_of(vm)}
     return lay
 
 
-def map_html(vm, lay, counts, small=False, mark=""):
-    """絵の上に、場所ごとの人数を丸で出す（mark は左上の小さな文字。①・②など）。"""
+SPREAD = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)]
+
+
+def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1):
+    """絵の上に、場所ごとの人数を丸で出す（mark は左上の小さな文字。①・②など）。
+    pieces（{番号: 場所}）をわたすと、丸のかわりに 太一のこま を その場所に置いて見せる。"""
     if not lay:
         return triangle_svg(vm, counts, 220 if small else 360)
     W, H = lay["size"]
+    if pieces and lay.get("pieces"):
+        by_place = {}
+        for no, place in sorted(pieces.items(), key=lambda x: int(x[0])):
+            if place:
+                by_place.setdefault(place, []).append(int(no))
+        imgs = ""
+        for place, nos in by_place.items():
+            x, y = lay["anchors"][place]
+            for k, no in enumerate(nos):
+                dx, dy = SPREAD[k % len(SPREAD)]
+                b64 = lay["pieces"].get(f"{rnd}_{no}")
+                if b64:
+                    imgs += (f'<img src="data:image/png;base64,{b64}" style="position:absolute;left:calc({x / W * 100:.2f}% + {dx * 6.2:.1f}cqw);'
+                             f'top:calc({y / H * 100:.2f}% + {dy * 6.2:.1f}cqw);width:6.6cqw;transform:translate(-50%,-50%);'
+                             f'filter:drop-shadow(0 0.4cqw 0.8cqw rgba(0,0,0,.5))">')
+        tag = f'<div style="position:absolute;left:8px;top:6px;color:#ffd54a;font-weight:900">{mark}</div>' if mark else ""
+        return (f'<div style="position:relative;width:100%;container-type:inline-size;border-radius:18px;overflow:hidden;line-height:1">'
+                f'<img src="data:image/jpeg;base64,{lay["image_b64"]}" style="width:100%;display:block">{tag}{imgs}</div>')
     color = {"corner": "#ffd54a", "center": "#8fdcff", "between": "#ff9ccb"}
     dots = ""
     for p in vm["places"]:
@@ -316,6 +346,72 @@ def where(lay, x, y):
             common = set(c1) & set(c2)
             return common.pop() if common else None
     return None
+
+
+def crop_board(data):
+    """スクリーンショットのまわり（Canva の白いわくなど）を切って、紺のボードだけにする。見つからなければ そのまま。"""
+    try:
+        from PIL import Image
+        import io
+        im = Image.open(io.BytesIO(data)).convert("RGB")
+        small = im.copy()
+        small.thumbnail((400, 400))
+        r, g, b = small.split()
+        navy = Image.eval(Image.merge("RGB", (r, g, b)).convert("HSV").split()[0], lambda h: 255 if 150 <= h <= 180 else 0)   # 青っぽい色
+        dark = Image.eval(small.convert("L"), lambda v: 255 if v < 90 else 0)
+        from PIL import ImageChops
+        box = ImageChops.multiply(navy, dark).getbbox()
+        if not box:
+            return data
+        k = im.width / small.width
+        x0, y0, x1, y1 = (int(v * k) for v in box)
+        if (x1 - x0) * (y1 - y0) < 0.4 * im.width * im.height:
+            return data
+        buf = io.BytesIO()
+        im.crop((x0, y0, x1, y1)).save(buf, "JPEG", quality=90)
+        return buf.getvalue()
+    except Exception:
+        return data
+
+
+def prepare_photo(data, lay):
+    """写真を読む前に：紺のボードだけを切り出し、もとのボードの大きさ（1920×1080）にそろえる（小さいと読みまちがえる）。"""
+    from PIL import Image
+    import io
+    cut = crop_board(data)
+    im = Image.open(io.BytesIO(cut)).convert("RGB")
+    W, H = (lay or {}).get("board", {}).get("size", (1920, 1080))
+    if abs(im.width / im.height - W / H) < 0.12:
+        im = im.resize((W, H), Image.LANCZOS)
+    else:
+        im.thumbnail((2048, 2048))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=90)
+    return buf.getvalue()
+
+
+def counts_of(pieces):
+    """{番号: 場所} → {場所: 人数}"""
+    out = {}
+    for place in (pieces or {}).values():
+        if place:
+            out[place] = out.get(place, 0) + 1
+    return out
+
+
+def photo_places(vm, data, lay):
+    """写真から読んだ こま を、①②それぞれ {番号: 場所} にする（場所は線の形でプログラムが決める）。"""
+    P = places_of(vm)
+    out = {1: {}, 2: {}}
+    for x in (data or {}).get("pieces") or []:
+        try:
+            rnd, no = int(x.get("round")), int(x.get("no"))
+            place = where(lay, float(x["x"]), float(x["y"])) if lay and lay.get("board") else str(x.get("place"))
+        except (TypeError, ValueError, KeyError):
+            continue
+        if rnd in (1, 2) and 1 <= no <= 8 and place in P and no not in out[rnd]:
+            out[rnd][no] = place
+    return out[1], out[2]
 
 
 def from_pieces(vm, data, lay=None):
