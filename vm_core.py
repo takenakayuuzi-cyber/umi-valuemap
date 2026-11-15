@@ -271,8 +271,7 @@ def load_layout(vm, name="海の命"):
                     rnd, no = (int(x) for x in key.split("_"))
                     lay["pieces"][(rnd, no)] = base64.b64decode(b64)
                     lay["pieces"][key] = b64
-        return lay
-    for rnd in (1, 2):
+    for rnd in (1, 2) if not lay["pieces"] else ():
         for no in range(1, 9):
             path = os.path.join(HERE, "data", "pieces", f"p{rnd}_{no}.png")
             if os.path.exists(path):
