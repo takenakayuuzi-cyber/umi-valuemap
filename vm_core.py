@@ -262,7 +262,16 @@ def load_layout(vm, name="海の命"):
             lay[key + "_b64"] = base64.b64encode(f.read()).decode()
     with open(os.path.join(HERE, "data", lay["image"]), "rb") as f:
         lay["image_bytes"] = f.read()
-    lay["pieces"] = {}   # 太一のこま（①1〜8・②1〜8）の絵
+    lay["pieces"] = {}   # 太一のこま（①1〜8・②1〜8）の絵：まとめたファイル（data/<教材>_こま.json）があれば、それを使う
+    bundle = os.path.join(HERE, "data", f"{name}_こま.json")
+    if os.path.exists(bundle):
+        with open(bundle, encoding="utf-8") as f:
+            for key, b64 in json.load(f).items():
+                if not key.startswith("_"):
+                    rnd, no = (int(x) for x in key.split("_"))
+                    lay["pieces"][(rnd, no)] = base64.b64decode(b64)
+                    lay["pieces"][key] = b64
+        return lay
     for rnd in (1, 2):
         for no in range(1, 9):
             path = os.path.join(HERE, "data", "pieces", f"p{rnd}_{no}.png")
