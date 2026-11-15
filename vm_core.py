@@ -286,27 +286,30 @@ def load_layout(vm, name="海の命"):
 SPREAD = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)]
 
 
-def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1):
+def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1, ghost=None):
     """絵の上に、場所ごとの人数を丸で出す（mark は左上の小さな文字。①・②など）。
     pieces（{番号: 場所}）をわたすと、丸のかわりに 太一のこま を その場所に置いて見せる。"""
     if not lay:
         return triangle_svg(vm, counts, 220 if small else 360)
     W, H = lay["size"]
     if pieces and lay.get("pieces"):
-        by_place = {}
-        for no, place in sorted(pieces.items(), key=lambda x: int(x[0])):
-            if place:
-                by_place.setdefault(place, []).append(int(no))
+        # ghost（①のこま）をわたすと、②の地図に うすく重ねる（Canva のボードと同じように、①から②への動きが1枚で見える）
+        layers = ([(ghost, 1, 0.45, 2.2)] if ghost else []) + [(pieces, rnd, 1, -2.2 if ghost else 0)]
         imgs = ""
-        for place, nos in by_place.items():
-            x, y = lay["anchors"][place]
-            for k, no in enumerate(nos):
-                dx, dy = SPREAD[k % len(SPREAD)]
-                b64 = lay["pieces"].get(f"{rnd}_{no}")
-                if b64:
-                    imgs += (f'<img src="data:image/png;base64,{b64}" style="position:absolute;left:calc({x / W * 100:.2f}% + {dx * 6.2:.1f}cqw);'
-                             f'top:calc({y / H * 100:.2f}% + {dy * 6.2:.1f}cqw);width:6.6cqw;transform:translate(-50%,-50%);'
-                             f'filter:drop-shadow(0 0.4cqw 0.8cqw rgba(0,0,0,.5))">')
+        for pcs, r, alpha, shift in layers:
+            by_place = {}
+            for no, place in sorted(pcs.items(), key=lambda x: int(x[0])):
+                if place:
+                    by_place.setdefault(place, []).append(int(no))
+            for place, nos in by_place.items():
+                x, y = lay["anchors"][place]
+                for k, no in enumerate(nos):
+                    dx, dy = SPREAD[k % len(SPREAD)]
+                    b64 = lay["pieces"].get(f"{r}_{no}")
+                    if b64:
+                        imgs += (f'<img src="data:image/png;base64,{b64}" style="position:absolute;left:calc({x / W * 100:.2f}% + {dx * 6.2 + shift:.1f}cqw);'
+                                 f'top:calc({y / H * 100:.2f}% + {dy * 6.2:.1f}cqw);width:6.6cqw;transform:translate(-50%,-50%);opacity:{alpha};'
+                                 f'filter:drop-shadow(0 0.4cqw 0.8cqw rgba(0,0,0,.5))">')
         tag = f'<div style="position:absolute;left:8px;top:6px;color:#ffd54a;font-weight:900">{mark}</div>' if mark else ""
         return (f'<div style="position:relative;width:100%;container-type:inline-size;border-radius:18px;overflow:hidden;line-height:1">'
                 f'<img src="data:image/jpeg;base64,{lay["image_b64"]}" style="width:100%;display:block">{tag}{imgs}</div>')

@@ -29,11 +29,14 @@ SEATS = 8   # こまの番号（Canva のボードに合わせて 1〜8。4人�
 
 
 @st.cache_resource
-def layout():
+def layout(version):
+    """地図とこまの絵。data フォルダのファイルが変わったら（version が変わったら）読みなおす。"""
     return core.load_layout(VM, MATERIAL)
 
 
-LAY = layout()
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+LAY = layout(tuple(sorted((f, os.path.getmtime(os.path.join(DATA_DIR, f)), os.path.getsize(os.path.join(DATA_DIR, f))) for f in os.listdir(DATA_DIR))))
+MISSING_PIECES = bool(LAY) and not LAY.get("pieces")
 TODAY = (LAY or {}).get("today", "")
 
 # 白い画面（ドクソウと同じ方針。ダークにしない）。Canva のバリューマップの絵（紺）は、白い画面の中のカードとして置く
@@ -233,6 +236,8 @@ def desk_view():
         st.rerun()
     if TODAY:
         st.markdown(f'<div class="today"><small>今日の問い</small><b>{TODAY}</b></div>', unsafe_allow_html=True)
+    if MISSING_PIECES:
+        st.warning(f"太一のこまの絵のファイルが見つかりません（GitHub の data フォルダに「{MATERIAL}_こま.json」があるか確かめてください）。数字の丸で表示しています。")
     photo_section(n)
     if st.session_state.get("photo_note"):
         st.success(st.session_state.pop("photo_note"))
@@ -264,7 +269,7 @@ def desk_view():
         p2, _ = piece_inputs(2, (rec.get("r2") or {}).get("pieces") or st.session_state.get("photo_p2") or r1.get("pieces", {}))
     c2 = core.counts_of(p2)
     with left:
-        st.markdown(core.map_html(VM, LAY, c2, pieces=p2, rnd=2), unsafe_allow_html=True)
+        st.markdown(core.map_html(VM, LAY, c2, pieces=p2, rnd=2, ghost=r1.get("pieces")), unsafe_allow_html=True)
         st.caption(f"置いたこま {len(p2)}こ")
     if st.button("➡ ①から②への動きを見る", type="primary", disabled=not p2):
         with st.spinner("動きを まとめています…"):
