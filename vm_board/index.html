@@ -12,6 +12,9 @@
   .piece img { width: 100%; display: block; pointer-events: none; filter: drop-shadow(0 0.5cqw 1cqw rgba(0,0,0,.55)); }
   .piece .lab { position: absolute; left: 50%; top: 100%; transform: translateX(-50%); white-space: nowrap; font-size: max(10px, 1.6cqw); font-weight: 800;
                 color: #14254a; background: rgba(255,255,255,.92); border-radius: 999px; padding: 0.1em 0.6em; margin-top: 0.2cqw; }
+  .piece .say { position: absolute; left: 88%; bottom: 72%; max-width: 22cqw; width: max-content; padding: 0.5cqw 1cqw; border-radius: 1.2cqw 1.2cqw 1.2cqw 0.2cqw;
+                background: #fff8dc; color: #14254a; font-size: max(10px, 1.6cqw); font-weight: 800; line-height: 1.35; box-shadow: 0 0.4cqw 1cqw rgba(0,0,0,.35);
+                pointer-events: none; word-break: break-all; }
   .piece.ghost { opacity: .4; cursor: default; z-index: 1; }
   .piece.ghost .lab { display: none; }
   .piece.other { cursor: default; }
@@ -79,6 +82,13 @@ function pieceEl(no, rnd, ghost) {
   d.innerHTML = `<img src="p${rnd}_${no}.png" alt="${no}"><span class="lab"></span>`;
   return d;
 }
+function say(el, no) {   // 根拠の言葉（①の地図だけ）を、太一のそばに吹き出しで
+  const w = A.rnd === 1 && A.words ? (A.words[no] || "").trim() : "";
+  let b = el.querySelector(".say");
+  if (!w) { if (b) b.remove(); return; }
+  if (!b) { b = document.createElement("span"); b.className = "say"; el.appendChild(b); }
+  b.textContent = "「" + w + "」";
+}
 function place(el, x, y) {
   const [W, H] = A.geo.size;
   el.style.left = (x / W * 100) + "%"; el.style.top = (y / H * 100) + "%";
@@ -104,7 +114,7 @@ function draw() {
   let waiting = 0;
   for (let no = 1; no <= A.seats; no++) {
     const el = pieceEl(no, A.rnd, false);
-    if (pos[no]) { map.appendChild(el); place(el, pos[no][0], pos[no][1]); }
+    if (pos[no]) { map.appendChild(el); place(el, pos[no][0], pos[no][1]); say(el, no); }
     else if (mineOK(no)) { tray.appendChild(el); waiting++; }
     else continue;   // ほかの人のまだ置いていないこまは、出さない
     if (mineOK(no)) el.addEventListener("pointerdown", start);

@@ -190,9 +190,9 @@ if LAY:
            "names": {c: NAMES[c] for c in CODES}}
 
 
-def board_map(n, rnd, pos, mine, ghost=None):
+def board_map(n, rnd, pos, mine, ghost=None, words=None):
     """机のみんなのこまを地図に出し、自分のこまだけ動かせる。動かしたら、そのこまだけを机の記録に入れる。"""
-    v = _vm_board(rnd=rnd, pos=pos, mine=mine, ghost=ghost or {}, seats=SEATS, geo=GEO, key=f"map{rnd}_{n}", default=None)
+    v = _vm_board(rnd=rnd, pos=pos, mine=mine, ghost=ghost or {}, words=words or {}, seats=SEATS, geo=GEO, key=f"map{rnd}_{n}", default=None)
     if v and v.get("seq") != st.session_state.get(f"seq{rnd}"):
         st.session_state[f"seq{rnd}"] = v.get("seq")
         if mine == "all" or int(v.get("no", 0)) == int(mine):   # 自分のこまだけ
@@ -281,7 +281,7 @@ def desk_view():
     # 根拠の言葉（自分の端末で、自分の番号の分を入れる。3秒ごとに新しくなる場所の外に置くので、書いている途中で消えない）
     words = board().get(n).get("words", {})
     with st.expander("✏️ 根拠にした本文の言葉を入れる（なくてもよい）", expanded=False):
-        st.caption("同じ言葉で ちがう場所に置いた人がいると、それを問いにします。")
+        st.caption("入れて Enter（またはほかのところを押す）と、①の地図で、その番号の太一のそばに出ます。同じ言葉で ちがう場所に置いた人がいると、それを問いにします。")
         for no in range(1, SEATS + 1):
             key = f"word{no}"
             if key not in st.session_state:
@@ -300,7 +300,7 @@ def live(n, seat):
     rec = board().get(n)
     pos1, pos2, words = rec.get("pos1", {}), rec.get("pos2", {}), rec.get("words", {})
     st.markdown('<div class="sec">① はじめの考え：自分の番号の太一のこまを、地図に置こう</div>', unsafe_allow_html=True)
-    board_map(n, 1, pos1, seat)
+    board_map(n, 1, pos1, seat, words=words)   # 根拠の言葉は、①の地図で太一のそばに吹き出しで出る
     p1 = core.pieces_of(LAY, pos1)
     st.caption(placed_text(pos1) + "。だれが「問いをもらう」を押しても、机のみんなに同じ問いが出ます。")
     r1 = rec.get("r1")
