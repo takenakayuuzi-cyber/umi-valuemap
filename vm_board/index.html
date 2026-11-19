@@ -109,8 +109,7 @@ function draw() {
     else continue;   // ほかの人のまだ置いていないこまは、出さない
     if (mineOK(no)) el.addEventListener("pointerdown", start);
   }
-  const me = A.mine === "all" ? "" : `${A.mine}番のこま`;
-  document.getElementById("hint").textContent = waiting ? `${me || "こま"}を ゆびで地図へ` : "地図の外へ出すと、ここに もどります";
+  document.getElementById("hint").textContent = waiting ? "自分の番号のこまを、ゆびで地図へ" : "地図の外へ出すと、ここに もどります";
   setHeight();
 }
 

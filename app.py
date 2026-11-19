@@ -238,23 +238,6 @@ def pick_desk():
                 st.rerun()
 
 
-def pick_seat(n):
-    st.title(f"🗺 机 {n}：あなたの番号をえらんでください")
-    st.caption("机のみんなが、それぞれ自分の端末で、自分の番号のこまを動かします。同じ机の人と、ちがう番号を選んでください。")
-    cols = st.columns(4)
-    for no in range(1, SEATS + 1):
-        if cols[(no - 1) % 4].button(f"{no}番", key=f"seat{no}", use_container_width=True):
-            st.session_state.seat = no
-            st.rerun()
-    st.divider()
-    if st.button("机の代表として入る（この端末で、全部のこまを動かす）", use_container_width=True):
-        st.session_state.seat = "all"
-        st.rerun()
-    if st.button("← 机をえらびなおす"):
-        st.session_state.pop("desk")
-        st.rerun()
-
-
 def photo_section(n):
     if not st.toggle("📷 Canva のボードの写真から、こまを置く（使わなくてもよい）", key="photo_on"):
         return
@@ -281,13 +264,11 @@ def photo_section(n):
 
 
 def desk_view():
-    n, seat = st.session_state.desk, st.session_state.seat
-    top = st.columns([4, 1, 1])
-    top[0].markdown(f'<span class="desk">机 {n}</span>　<b>{"机の代表（全部のこまを動かせる）" if seat == "all" else f"あなたは {seat}番"}</b>', unsafe_allow_html=True)
-    if top[1].button("番号をかえる"):
-        st.session_state.pop("seat")
-        st.rerun()
-    if top[2].button("机をかえる"):
+    # 机のみんなで1枚の地図（ロイロノートの共有ノートのように、だれでも どのこまでも動かせる）
+    n, seat = st.session_state.desk, "all"
+    top = st.columns([5, 1])
+    top[0].markdown(f'<span class="desk">机 {n}</span>　<b>机のみんなで1枚の地図を使います。自分の番号のこまを動かしましょう。</b>', unsafe_allow_html=True)
+    if top[1].button("机をかえる"):
         for k in list(st.session_state):
             if k != "role":
                 st.session_state.pop(k)
@@ -301,7 +282,7 @@ def desk_view():
     words = board().get(n).get("words", {})
     with st.expander("✏️ 根拠にした本文の言葉を入れる（なくてもよい）", expanded=False):
         st.caption("同じ言葉で ちがう場所に置いた人がいると、それを問いにします。")
-        for no in (range(1, SEATS + 1) if seat == "all" else [seat]):
+        for no in range(1, SEATS + 1):
             key = f"word{no}"
             if key not in st.session_state:
                 st.session_state[key] = words.get(str(no), "")
@@ -313,9 +294,9 @@ def desk_view():
         wall(n, rec, rec["r1"])
 
 
-@st.fragment(run_every=3)
+@st.fragment(run_every=1.5)
 def live(n, seat):
-    """地図・問い・動き（机のみんなの動きが 3秒ごとに反映される）。"""
+    """地図・問い・動き（机のみんなの動きが 1.5秒ごとに反映される）。"""
     rec = board().get(n)
     pos1, pos2, words = rec.get("pos1", {}), rec.get("pos2", {}), rec.get("words", {})
     st.markdown('<div class="sec">① はじめの考え：自分の番号の太一のこまを、地図に置こう</div>', unsafe_allow_html=True)
@@ -360,7 +341,7 @@ def wall(n, rec, r1):
         rec = board().get(n)
         talk = rec.get("chat", [])
         system = core.wall_system(VM, r1["question"], (rec.get("r2") or r1)["counts"], r1.get("evidence", []))
-        who = "代表" if st.session_state.seat == "all" else f"{st.session_state.seat}番"
+        who = ""
         with st.spinner("考えています…"):
             try:
                 out = core.check_wall(ai.chat(system, (talk + [{"role": "user", "text": said}])[-12:]))
@@ -371,7 +352,7 @@ def wall(n, rec, r1):
         st.rerun()
 
 
-@st.fragment(run_every=5)
+@st.fragment(run_every=3)
 def wall_log(n):
     for m in board().get(n).get("chat", [])[-12:]:
         with st.chat_message("user" if m["role"] == "user" else "assistant", avatar="🧑‍🏫" if m["role"] == "user" else "🗺"):
@@ -491,8 +472,6 @@ if role == "teacher":
 elif role == "desk":
     if not st.session_state.get("desk"):
         pick_desk()
-    elif not st.session_state.get("seat"):
-        pick_seat(st.session_state.desk)
     else:
         desk_view()
 else:
