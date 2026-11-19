@@ -287,7 +287,7 @@ def load_layout(vm, name="海の命"):
 SPREAD = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)]
 
 
-def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1, ghost=None, positions=None, ghost_positions=None):
+def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1, ghost=None, positions=None, ghost_positions=None, words=None):
     """絵の上に、場所ごとの人数を丸で出す（mark は左上の小さな文字。①・②など）。
     pieces（{番号: 場所}）をわたすと、丸のかわりに 太一のこま を その場所に置いて見せる。"""
     if not lay:
@@ -306,6 +306,15 @@ def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1, ghost=No
                     if b64:
                         imgs += (f'<img src="data:image/png;base64,{b64}" style="position:absolute;left:{x / W * 100:.2f}%;top:{y / H * 100:.2f}%;'
                                  f'width:{pw}cqw;transform:translate(-50%,-50%);opacity:{alpha};filter:drop-shadow(0 0.4cqw 0.8cqw rgba(0,0,0,.5))">')
+                    w = (words or {}).get(str(no), "").strip() if r == 1 and alpha == 1 else ""
+                    if w:   # 根拠の言葉の吹き出し（机の画面と同じ）
+                        from html import escape
+                        right = x > W * 0.6   # 右のほうのこまは、吹き出しを左に（地図の外で切れないように）
+                        side = (f"right:calc({100 - x / W * 100:.2f}% + {pw * 0.38:.1f}cqw)" if right else f"left:calc({x / W * 100:.2f}% + {pw * 0.38:.1f}cqw)")
+                        imgs += (f'<div style="position:absolute;{side};top:calc({y / H * 100:.2f}% - {pw * 0.36:.1f}cqw);'
+                                 f'transform:translateY(-100%);max-width:{30 if small else 24}cqw;width:max-content;padding:0.5cqw 1cqw;border-radius:1.2cqw 1.2cqw 1.2cqw 0.2cqw;'
+                                 f'background:#fff8dc;color:#14254a;font-size:max(8px,{2.6 if small else 1.7}cqw);font-weight:800;line-height:1.35;'
+                                 f'box-shadow:0 0.4cqw 1cqw rgba(0,0,0,.35);word-break:break-all">「{escape(w)}」</div>')
         for pcs, r, alpha, shift in layers:
             by_place = {}
             for no, place in sorted(pcs.items(), key=lambda x: int(x[0])):

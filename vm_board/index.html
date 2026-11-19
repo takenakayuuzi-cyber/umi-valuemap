@@ -15,6 +15,7 @@
   .piece .say { position: absolute; left: 88%; bottom: 72%; max-width: 22cqw; width: max-content; padding: 0.5cqw 1cqw; border-radius: 1.2cqw 1.2cqw 1.2cqw 0.2cqw;
                 background: #fff8dc; color: #14254a; font-size: max(10px, 1.6cqw); font-weight: 800; line-height: 1.35; box-shadow: 0 0.4cqw 1cqw rgba(0,0,0,.35);
                 pointer-events: none; word-break: break-all; }
+  .piece .say.left { left: auto; right: 88%; border-radius: 1.2cqw 1.2cqw 0.2cqw 1.2cqw; }   /* 右のほうのこまは、吹き出しを左に */
   .piece.ghost { opacity: .4; cursor: default; z-index: 1; }
   .piece.ghost .lab { display: none; }
   .piece.other { cursor: default; }
@@ -88,6 +89,7 @@ function say(el, no) {   // 根拠の言葉（①の地図だけ）を、太一�
   if (!w) { if (b) b.remove(); return; }
   if (!b) { b = document.createElement("span"); b.className = "say"; el.appendChild(b); }
   b.textContent = "「" + w + "」";
+  b.classList.toggle("left", parseFloat(el.style.left) > 60);
 }
 function place(el, x, y) {
   const [W, H] = A.geo.size;

@@ -369,6 +369,9 @@ def teacher_board():
     # 「大きく見せる」を押すと、そのマップだけを画面いっぱいに（スクリーンに映して会場ぜんたいで見る）
     big = st.session_state.get("big")
     title = {"1": "会場ぜんたい ①（話し合いの前）", "2": "会場ぜんたい ②（話し合いの後）"}
+    if big and big.startswith("desk"):
+        desk_big(int(big[4:]), data.get(int(big[4:]), {}))
+        return
     if big:
         top = st.columns([4, 1])
         top[0].markdown(f'<div class="sec" style="font-size:1.8rem">{"会場ぜんたい ①→②" if big == "both" else title[big]}</div>', unsafe_allow_html=True)
@@ -411,14 +414,19 @@ def teacher_board():
             d = data.get(n, {})
             r1, r2 = d.get("r1"), d.get("r2")
             with cols[i]:
-                live1 = d.get("pos1") or {}
+                live1, words = d.get("pos1") or {}, d.get("words") or {}
+                said = "".join(f'<div class="s">{k}番「{v}」</div>' for k, v in sorted(words.items(), key=lambda x: int(x[0])) if v and k in live1)
+                if live1 and st.button("🔍 この机を大きく", key=f"bigdesk{n}", use_container_width=True):
+                    st.session_state.big = f"desk{n}"
+                    st.rerun(scope="fragment")
                 if not r1:   # まだ問いをもらっていない机：置いている途中のこまを そのまま
                     st.markdown(f'<div class="dcard"><h4>机 {n}</h4>' + (core.map_html(VM, LAY, {}, small=True, mark="①", pieces=core.pieces_of(LAY, live1), rnd=1,
-                                positions=live1) + '<span class="s">置いている途中</span>' if live1 else '<span class="s">まだ</span>') + "</div>", unsafe_allow_html=True)
+                                positions=live1, words=words) + '<span class="s">置いている途中</span>' + said if live1 else '<span class="s">まだ</span>') + "</div>", unsafe_allow_html=True)
                     continue
                 # 机の画面と同じように、置いた場所そのままの太一のこま（②の地図には①を うすく重ねる）
                 pos_or = lambda r: r.get("pos") if r.get("pos") else None
-                maps = core.map_html(VM, LAY, r1["counts"], small=True, mark="①", pieces=r1.get("pieces"), rnd=1, positions=pos_or(r1)) + (
+                maps = core.map_html(VM, LAY, r1["counts"], small=True, mark="①", pieces=core.pieces_of(LAY, live1) or r1.get("pieces"), rnd=1,
+                                     positions=live1 or pos_or(r1), words=words) + said + (
                     '<div style="height:6px"></div>' + core.map_html(VM, LAY, r2["counts"], small=True, mark="②", pieces=r2.get("pieces"), rnd=2,
                                                                        ghost=r1.get("pieces"), positions=pos_or(r2), ghost_positions=pos_or(r1)) if r2 else "")
                 talks = sum(1 for m in d.get("chat", []) if m["role"] == "user")
@@ -426,6 +434,29 @@ def teacher_board():
                             f'<div class="q">{r1["question"]}</div>' + (f'<div class="s">📖 {r1["hint"]}</div>' if r1.get("hint") else "")
                             + (f'<div class="m">➡ {r2["line"]}</div>' if r2 else '<div class="s">②はまだ</div>')
                             + (f'<div class="s">💬 壁打ち {talks}回</div>' if talks else "") + "</div>", unsafe_allow_html=True)
+
+
+def desk_big(n, d):
+    """1つの机を画面いっぱいに（①②の地図と吹き出し・問い・ひとこと・動き）。スクリーンに映して会場で取り上げるとき。"""
+    top = st.columns([4, 1])
+    top[0].markdown(f'<div class="sec" style="font-size:1.8rem">机 {n}</div>', unsafe_allow_html=True)
+    if top[1].button("← もどる", use_container_width=True, key="back_desk"):
+        st.session_state.big = None
+        st.rerun(scope="fragment")
+    r1, r2, live1, live2, words = d.get("r1"), d.get("r2"), d.get("pos1") or {}, d.get("pos2") or {}, d.get("words") or {}
+    if r1:
+        st.markdown(f'<div class="qbox"><small>この机の問い（{r1["qid"]}）</small><p>{r1["question"]}</p>'
+                    + (f'<div class="hint">📖 この机へのひとこと：{r1["hint"]}</div>' if r1.get("hint") else "") + "</div>", unsafe_allow_html=True)
+    a, b = st.columns(2)
+    a.markdown('<div class="sec">①（話し合いの前）</div>' + core.map_html(VM, LAY, {}, mark="①", pieces=core.pieces_of(LAY, live1), rnd=1, positions=live1, words=words),
+               unsafe_allow_html=True)
+    if live2:
+        b.markdown('<div class="sec">②（話し合いの後）</div>' + core.map_html(VM, LAY, {}, mark="②", pieces=core.pieces_of(LAY, live2), rnd=2, positions=live2,
+                                                                             ghost=core.pieces_of(LAY, live1), ghost_positions=live1), unsafe_allow_html=True)
+    else:
+        b.markdown('<div class="sec">②（話し合いの後）</div><div class="dcard">まだ②のこまは置かれていません</div>', unsafe_allow_html=True)
+    if r2:
+        st.markdown(f'<div class="mline">➡ {r2["line"]}<small>{core.diff_text(VM, r1["counts"], r2["counts"])}</small></div>', unsafe_allow_html=True)
 
 
 def teacher_view():
