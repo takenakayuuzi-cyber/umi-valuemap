@@ -92,6 +92,21 @@ class Board:
                 self.data[desk].pop("r2", None)
             self._save()
 
+    def set_pos(self, desk, rnd, no, xy):
+        """こま1つの位置（xy が None なら、置いていないにもどす）。ほかの人のこまは さわらない。"""
+        with self.lock:
+            pos = self.data.setdefault(desk, {}).setdefault(f"pos{rnd}", {})
+            if xy:
+                pos[str(no)] = [int(xy[0]), int(xy[1])]
+            else:
+                pos.pop(str(no), None)
+            self._save()
+
+    def set_word(self, desk, no, word):
+        with self.lock:
+            self.data.setdefault(desk, {}).setdefault("words", {})[str(no)] = str(word or "").strip()[:40]
+            self._save()
+
     def talk(self, desk, msgs):
         with self.lock:
             self.data.setdefault(desk, {}).setdefault("chat", []).extend(msgs)
@@ -165,33 +180,29 @@ def make_move(before, after):
     return {"line": core.move_line(VM, before, after), "by": "table", "why": why}
 
 
-def piece_inputs(rnd, start, words=None):
-    """太一のこま（番号1〜8）ごとに、どこに置いたかを選ぶ。words があれば、こまごとに根拠の言葉も入れる。
-    写真から読んだ場所は、session_state から入る。返すもの：({番号: 場所}, [根拠の言葉])"""
-    opts = [""] + CODES
-    pieces, evidence = {}, []
-    for no in range(1, SEATS + 1):
-        key = f"p{rnd}_{no}"
-        if key not in st.session_state:
-            st.session_state[key] = start.get(str(no), start.get(no, ""))
-        cols = st.columns([1, 3, 4] if words is not None else [1, 4])
-        img = (LAY or {}).get("pieces", {}).get((rnd, no))
-        if img:
-            cols[0].image(img, width=46)
-        else:
-            cols[0].markdown(f"**{no}**")
-        place = cols[1].selectbox(f"{'①' if rnd == 1 else '②'}{no}", opts, format_func=lambda c: NAMES.get(c, "置かない"),
-                                  key=key, label_visibility="collapsed")
-        if place:
-            pieces[no] = place
-        if words is not None:
-            wkey = f"w{rnd}_{no}"
-            if wkey not in st.session_state:
-                st.session_state[wkey] = words.get(no, "")
-            word = cols[2].text_input(f"{no}の言葉", key=wkey, max_chars=40, label_visibility="collapsed", placeholder="根拠の言葉（なくてもよい）")
-            if place and word.strip():
-                evidence.append({"no": no, "place": place, "word": word.strip()})
-    return pieces, evidence
+# 地図の上で こまを指で動かす部品（vm_board/index.html）。画像は部品のフォルダから読み、やりとりは位置の数字だけ
+import streamlit.components.v1 as components
+_vm_board = components.declare_component("vm_board", path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "vm_board"))
+GEO = None
+if LAY:
+    _b = LAY["board"]
+    GEO = {"size": LAY["size"], "center": _b["center"], "radius": _b["radius"], "near": _b["near"], "lines": _b["lines"],
+           "names": {c: NAMES[c] for c in CODES}}
+
+
+def board_map(n, rnd, pos, mine, ghost=None):
+    """机のみんなのこまを地図に出し、自分のこまだけ動かせる。動かしたら、そのこまだけを机の記録に入れる。"""
+    v = _vm_board(rnd=rnd, pos=pos, mine=mine, ghost=ghost or {}, seats=SEATS, geo=GEO, key=f"map{rnd}_{n}", default=None)
+    if v and v.get("seq") != st.session_state.get(f"seq{rnd}"):
+        st.session_state[f"seq{rnd}"] = v.get("seq")
+        if mine == "all" or int(v.get("no", 0)) == int(mine):   # 自分のこまだけ
+            board().set_pos(n, rnd, int(v["no"]), v.get("xy"))
+            st.rerun(scope="fragment")
+
+
+def placed_text(pos):
+    nos = sorted(int(k) for k in pos)
+    return f"置いたこま {len(nos)}こ（" + "・".join(f"{x}番" for x in nos) + "）" if nos else "まだ だれも置いていません"
 
 
 # ---------- 入口 ----------
@@ -227,9 +238,27 @@ def pick_desk():
                 st.rerun()
 
 
+def pick_seat(n):
+    st.title(f"🗺 机 {n}：あなたの番号をえらんでください")
+    st.caption("机のみんなが、それぞれ自分の端末で、自分の番号のこまを動かします。同じ机の人と、ちがう番号を選んでください。")
+    cols = st.columns(4)
+    for no in range(1, SEATS + 1):
+        if cols[(no - 1) % 4].button(f"{no}番", key=f"seat{no}", use_container_width=True):
+            st.session_state.seat = no
+            st.rerun()
+    st.divider()
+    if st.button("机の代表として入る（この端末で、全部のこまを動かす）", use_container_width=True):
+        st.session_state.seat = "all"
+        st.rerun()
+    if st.button("← 机をえらびなおす"):
+        st.session_state.pop("desk")
+        st.rerun()
+
+
 def photo_section(n):
+    if not st.toggle("📷 Canva のボードの写真から、こまを置く（使わなくてもよい）", key="photo_on"):
+        return
     with st.container(border=True):
-        st.markdown('<div class="sec" style="margin-top:0">📷 Canva のバリューマップの写真から、人数を入れる（入れなくてもよい）</div>', unsafe_allow_html=True)
         st.caption("こまを置いた Canva のボードの スクリーンショット（ボード全体）がいちばん正確です。写真でもかまいません。それを入れると、AIが こまの場所を読んで ①② の人数を入れます。"
                    "まちがいがないか確かめて、直してから進んでください。どの問いを出すかは、AIではなく表で決めます。")
         up = st.file_uploader("写真をえらぶ", type=["png", "jpg", "jpeg", "heic", "webp"], key=f"photo{n}")
@@ -241,104 +270,119 @@ def photo_section(n):
                 except ai.AiError as e:
                     st.error(f"写真を読めませんでした（{e}）。人数を手で入れてください。")
                     return
-            c1, c2 = core.photo_places(VM, got, LAY)   # 写真の言葉は使わない（AIが作ってしまうことがあった）
-            for no in range(1, SEATS + 1):
-                st.session_state[f"p1_{no}"] = c1.get(no, "")
-                st.session_state.pop(f"p2_{no}", None)
-            # ②のらんは、①の問いが出るまで画面にない（Streamlit は、画面にないらんの値を すててしまう）ので、別に覚えておく
-            st.session_state.photo_p2 = {str(k): v for k, v in c2.items()} if c2 else None
+            c1, c2 = core.photo_positions(got, LAY)   # 写真の言葉は使わない（AIが作ってしまうことがあった）
+            for no, xy in c1.items():
+                board().set_pos(n, 1, int(no), xy)
+            for no, xy in c2.items():
+                board().set_pos(n, 2, int(no), xy)
             st.session_state.photo_note = (f"写真から読みとりました：① {len(c1)}こ" + (f"・② {len(c2)}こ" if c2 else "")
                                            + "。まちがいがないか確かめてください。")
             st.rerun()
 
 
 def desk_view():
-    n = st.session_state.desk
-    rec = board().get(n)
-    top = st.columns([5, 1])
-    top[0].markdown(f'<span class="desk">机 {n}</span>', unsafe_allow_html=True)
-    if top[1].button("机をかえる"):
+    n, seat = st.session_state.desk, st.session_state.seat
+    top = st.columns([4, 1, 1])
+    top[0].markdown(f'<span class="desk">机 {n}</span>　<b>{"机の代表（全部のこまを動かせる）" if seat == "all" else f"あなたは {seat}番"}</b>', unsafe_allow_html=True)
+    if top[1].button("番号をかえる"):
+        st.session_state.pop("seat")
+        st.rerun()
+    if top[2].button("机をかえる"):
         for k in list(st.session_state):
             if k != "role":
                 st.session_state.pop(k)
         st.rerun()
     if TODAY:
         st.markdown(f'<div class="today"><small>今日の問い</small><b>{TODAY}</b></div>', unsafe_allow_html=True)
-    if MISSING_PIECES:
-        st.warning(f"太一のこまの絵のファイルが見つかりません（GitHub の data フォルダに「{MATERIAL}_こま.json」があるか確かめてください）。数字の丸で表示しています。")
+    if not GEO:
+        st.error("地図のファイルが見つかりません（data フォルダを確かめてください）。")
+        return
+    # 根拠の言葉（自分の端末で、自分の番号の分を入れる。3秒ごとに新しくなる場所の外に置くので、書いている途中で消えない）
+    words = board().get(n).get("words", {})
+    with st.expander("✏️ 根拠にした本文の言葉を入れる（なくてもよい）", expanded=False):
+        st.caption("同じ言葉で ちがう場所に置いた人がいると、それを問いにします。")
+        for no in (range(1, SEATS + 1) if seat == "all" else [seat]):
+            key = f"word{no}"
+            if key not in st.session_state:
+                st.session_state[key] = words.get(str(no), "")
+            st.text_input(f"{no}番の言葉", key=key, max_chars=40, on_change=lambda no=no: board().set_word(n, no, st.session_state[f"word{no}"]))
     photo_section(n)
-    if st.session_state.get("photo_note"):
-        st.success(st.session_state.pop("photo_note"))
+    live(n, seat)
+    rec = board().get(n)
+    if rec.get("r1"):
+        wall(n, rec, rec["r1"])
 
-    st.markdown('<div class="sec">① はじめの考え：太一のこまを、どこに置いた？</div>', unsafe_allow_html=True)
-    old1 = rec.get("r1") or {}
-    left, right = st.columns([3, 2])
-    with right:
-        st.caption("こまごとに置いた場所を選びます。根拠にした本文の言葉も入れられます（同じ言葉で ちがう場所に置いた人がいると、それを問いにします）。")
-        p1, evidence = piece_inputs(1, old1.get("pieces", {}), {e["no"]: e["word"] for e in old1.get("evidence", [])})
-    c1 = core.counts_of(p1)
-    with left:
-        st.markdown(core.map_html(VM, LAY, c1, pieces=p1, rnd=1), unsafe_allow_html=True)
-        st.caption(f"置いたこま {len(p1)}こ")
-    if st.button("🎯 この机の問いをもらう", type="primary", disabled=not p1):
+
+@st.fragment(run_every=3)
+def live(n, seat):
+    """地図・問い・動き（机のみんなの動きが 3秒ごとに反映される）。"""
+    rec = board().get(n)
+    pos1, pos2, words = rec.get("pos1", {}), rec.get("pos2", {}), rec.get("words", {})
+    st.markdown('<div class="sec">① はじめの考え：自分の番号の太一のこまを、地図に置こう</div>', unsafe_allow_html=True)
+    board_map(n, 1, pos1, seat)
+    p1 = core.pieces_of(LAY, pos1)
+    st.caption(placed_text(pos1) + "。だれが「問いをもらう」を押しても、机のみんなに同じ問いが出ます。")
+    r1 = rec.get("r1")
+    if st.button("🎯 この机の問いをもらう" + ("（もう一度）" if r1 else ""), type="primary", disabled=not p1, key="ask_q"):
+        evidence = [{"no": no, "place": place, "word": words[str(no)]} for no, place in sorted(p1.items()) if words.get(str(no))]
+        c1 = core.counts_of(p1)
         with st.spinner("問いを えらんでいます…"):
             q = make_question(c1, evidence)
             q.update(make_hint(p1, evidence, q["question"]))
-        board().put(n, "r1", {"pieces": {str(k): v for k, v in p1.items()}, "counts": c1, "evidence": evidence, **q, "at": time.time()})
+        board().put(n, "r1", {"pieces": {str(k): v for k, v in p1.items()}, "pos": pos1, "counts": c1, "evidence": evidence, **q, "at": time.time()})
         st.rerun()
-
-    r1 = rec.get("r1")
     if not r1:
         return
     st.markdown(f'<div class="qbox"><small>この机の問い（{r1["qid"]}）</small><p>{r1["question"]}</p>'
                 + (f'<div class="hint">📖 この机へのひとこと：{r1["hint"]}</div>' if r1.get("hint") else "") + "</div>", unsafe_allow_html=True)
-
-    st.markdown('<div class="sec">② 話し合ったあとの考え：②のこまを、どこに置いた？（①は動かさない）</div>', unsafe_allow_html=True)
-    left, right = st.columns([3, 2])
-    with right:
-        p2, _ = piece_inputs(2, (rec.get("r2") or {}).get("pieces") or st.session_state.get("photo_p2") or r1.get("pieces", {}))
-    c2 = core.counts_of(p2)
-    with left:
-        st.markdown(core.map_html(VM, LAY, c2, pieces=p2, rnd=2, ghost=r1.get("pieces")), unsafe_allow_html=True)
-        st.caption(f"置いたこま {len(p2)}こ")
-    if st.button("➡ ①から②への動きを見る", type="primary", disabled=not p2):
+    st.markdown('<div class="sec">② 話し合ったあとの考え：②のこまを置こう（①は うすく出ています。動かしません）</div>', unsafe_allow_html=True)
+    board_map(n, 2, pos2, seat, ghost=r1.get("pos") or pos1)
+    p2 = core.pieces_of(LAY, pos2)
+    st.caption(placed_text(pos2))
+    if st.button("➡ ①から②への動きを見る", type="primary", disabled=not p2, key="ask_m"):
+        c2 = core.counts_of(p2)
         with st.spinner("動きを まとめています…"):
             m = make_move(r1["counts"], c2)
-        board().put(n, "r2", {"pieces": {str(k): v for k, v in p2.items()}, "counts": c2, **m, "at": time.time()})
+        board().put(n, "r2", {"pieces": {str(k): v for k, v in p2.items()}, "pos": pos2, "counts": c2, **m, "at": time.time()})
         st.rerun()
     r2 = rec.get("r2")
     if r2:
         st.markdown(f'<div class="mline">➡ {r2["line"]}<small>{core.diff_text(VM, r1["counts"], r2["counts"])}</small></div>', unsafe_allow_html=True)
 
-    wall(n, rec, r1)
-
 
 def wall(n, rec, r1):
-    st.markdown('<div class="sec">💬 壁打ち（AIと話して、考えを深める）</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">💬 壁打ち（AIと話して、考えを深める。机のみんなで見られます）</div>', unsafe_allow_html=True)
     st.caption("AIは答えや「正しい位置」は言いません。根拠や、ほかの角からの見え方を問い返します。")
-    talk = rec.get("chat", [])
-    for m in talk[-12:]:
-        with st.chat_message("user" if m["role"] == "user" else "assistant", avatar="🧑‍🏫" if m["role"] == "user" else "🗺"):
-            st.write(m["text"])
+    wall_log(n)
     said = st.chat_input("この机の考えや、聞いてみたいことを書いてください")
     if said:
         said = said.strip()[:300]
+        rec = board().get(n)
+        talk = rec.get("chat", [])
         system = core.wall_system(VM, r1["question"], (rec.get("r2") or r1)["counts"], r1.get("evidence", []))
+        who = "代表" if st.session_state.seat == "all" else f"{st.session_state.seat}番"
         with st.spinner("考えています…"):
             try:
                 out = core.check_wall(ai.chat(system, (talk + [{"role": "user", "text": said}])[-12:]))
             except ai.AiError:
                 out = None
-        board().talk(n, [{"role": "user", "text": said, "at": time.time()},
+        board().talk(n, [{"role": "user", "who": who, "text": said, "at": time.time()},
                          {"role": "ai", "text": out or "うまく答えられませんでした。もう一度、問いにもどって、根拠の言葉をさがしてみましょう。", "at": time.time()}])
         st.rerun()
+
+
+@st.fragment(run_every=5)
+def wall_log(n):
+    for m in board().get(n).get("chat", [])[-12:]:
+        with st.chat_message("user" if m["role"] == "user" else "assistant", avatar="🧑‍🏫" if m["role"] == "user" else "🗺"):
+            st.write((f"**{m['who']}**　" if m.get("who") else "") + m["text"])
 
 
 # ---------- 先生の画面 ----------
 @st.fragment(run_every=5)
 def teacher_board():
     data = board().all()
-    tot1 = {c: sum((d.get("r1") or {}).get("counts", {}).get(c, 0) for d in data.values()) for c in CODES}
+    tot1 = {c: sum((d.get("r1") or {}).get("counts", {}).get(c, 0) for d in data.values()) for c in CODES}   # 問いをもらった机の①
     # ②がまだの机は、①のまま数える（まだ入れていない机を「動いた」と見ないように）
     tot2 = {c: sum((d.get("r2") or d.get("r1") or {}).get("counts", {}).get(c, 0) for d in data.values()) for c in CODES}
     # 「大きく見せる」を押すと、そのマップだけを画面いっぱいに（スクリーンに映して会場ぜんたいで見る）
@@ -386,13 +430,16 @@ def teacher_board():
             d = data.get(n, {})
             r1, r2 = d.get("r1"), d.get("r2")
             with cols[i]:
-                if not r1:
-                    st.markdown(f'<div class="dcard"><h4>机 {n}</h4><span class="s">まだ</span></div>', unsafe_allow_html=True)
+                live1 = d.get("pos1") or {}
+                if not r1:   # まだ問いをもらっていない机：置いている途中のこまを そのまま
+                    st.markdown(f'<div class="dcard"><h4>机 {n}</h4>' + (core.map_html(VM, LAY, {}, small=True, mark="①", pieces=core.pieces_of(LAY, live1), rnd=1,
+                                positions=live1) + '<span class="s">置いている途中</span>' if live1 else '<span class="s">まだ</span>') + "</div>", unsafe_allow_html=True)
                     continue
-                # 机の画面と同じように、番号つきの太一のこま（②の地図には①を うすく重ねる）
-                maps = core.map_html(VM, LAY, r1["counts"], small=True, mark="①", pieces=r1.get("pieces"), rnd=1) + (
+                # 机の画面と同じように、置いた場所そのままの太一のこま（②の地図には①を うすく重ねる）
+                pos_or = lambda r: r.get("pos") if r.get("pos") else None
+                maps = core.map_html(VM, LAY, r1["counts"], small=True, mark="①", pieces=r1.get("pieces"), rnd=1, positions=pos_or(r1)) + (
                     '<div style="height:6px"></div>' + core.map_html(VM, LAY, r2["counts"], small=True, mark="②", pieces=r2.get("pieces"), rnd=2,
-                                                                       ghost=r1.get("pieces")) if r2 else "")
+                                                                       ghost=r1.get("pieces"), positions=pos_or(r2), ghost_positions=pos_or(r1)) if r2 else "")
                 talks = sum(1 for m in d.get("chat", []) if m["role"] == "user")
                 st.markdown(f'<div class="dcard"><h4>机 {n}　<small>{r1["qid"]}{"・AI" if r1["by"] == "ai" else ""}</small></h4>{maps}'
                             f'<div class="q">{r1["question"]}</div>' + (f'<div class="s">📖 {r1["hint"]}</div>' if r1.get("hint") else "")
@@ -442,9 +489,11 @@ if role == "desk" and board().closed:
 if role == "teacher":
     teacher_view()
 elif role == "desk":
-    if st.session_state.get("desk"):
-        desk_view()
-    else:
+    if not st.session_state.get("desk"):
         pick_desk()
+    elif not st.session_state.get("seat"):
+        pick_seat(st.session_state.desk)
+    else:
+        desk_view()
 else:
     login()

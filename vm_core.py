@@ -287,7 +287,7 @@ def load_layout(vm, name="海の命"):
 SPREAD = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)]
 
 
-def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1, ghost=None):
+def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1, ghost=None, positions=None, ghost_positions=None):
     """絵の上に、場所ごとの人数を丸で出す（mark は左上の小さな文字。①・②など）。
     pieces（{番号: 場所}）をわたすと、丸のかわりに 太一のこま を その場所に置いて見せる。"""
     if not lay:
@@ -298,6 +298,14 @@ def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1, ghost=No
         layers = ([(ghost, 1, 0.45, 2.2)] if ghost else []) + [(pieces, rnd, 1, -2.2 if ghost else 0)]
         imgs = ""
         pw, gap = (11.5, 10.5) if small else (6.6, 6.2)   # 小さい地図では、こまを大きめに
+        if positions is not None:   # 置いた場所そのまま（一人一台で動かしたとき）
+            layers = []
+            for pp, r, alpha in ([(ghost_positions, 1, 0.45)] if ghost_positions else []) + [(positions, rnd, 1)]:
+                for no, (x, y) in (pp or {}).items():
+                    b64 = lay["pieces"].get(f"{r}_{no}")
+                    if b64:
+                        imgs += (f'<img src="data:image/png;base64,{b64}" style="position:absolute;left:{x / W * 100:.2f}%;top:{y / H * 100:.2f}%;'
+                                 f'width:{pw}cqw;transform:translate(-50%,-50%);opacity:{alpha};filter:drop-shadow(0 0.4cqw 0.8cqw rgba(0,0,0,.5))">')
         for pcs, r, alpha, shift in layers:
             by_place = {}
             for no, place in sorted(pcs.items(), key=lambda x: int(x[0])):
@@ -345,11 +353,15 @@ def map_html(vm, lay, counts, small=False, mark="", pieces=None, rnd=1, ghost=No
 def where(lay, x, y):
     """ボードの上の位置（写真の左上0・右下1000）が、どの場所か。AIではなく、Y字の線の形で決める。
     右がわの置き場（まだ置いていない こま）なら None。"""
+    W, H = lay["board"]["size"]
+    return where_px(lay, x / 1000 * W, y / 1000 * H)
+
+
+def where_px(lay, px, py):
+    """地図の上の位置（ボードの左上が0。1920×1080 のボードでの点）が、どの場所か。地図の外なら None。"""
     import math
     b = lay["board"]
-    W, H = b["size"]
-    px, py = x / 1000 * W, y / 1000 * H
-    if px > b["map_width"]:
+    if px < 0 or py < 0 or px > b["map_width"] or py > b["size"][1]:
         return None
     cx, cy = b["center"]
     if math.hypot(px - cx, py - cy) <= b["radius"]:
@@ -411,6 +423,30 @@ def prepare_photo(data, lay):
     buf = io.BytesIO()
     im.save(buf, "JPEG", quality=90)
     return buf.getvalue()
+
+
+def pieces_of(lay, pos):
+    """{番号: [x, y]}（地図の上の位置）→ {番号: 場所}。場所は線の形でプログラムが決める。"""
+    out = {}
+    for no, xy in (pos or {}).items():
+        place = where_px(lay, xy[0], xy[1]) if xy else None
+        if place:
+            out[int(no)] = place
+    return out
+
+
+def photo_positions(data, lay):
+    """写真から読んだ こま を、①②それぞれ {番号: [x, y]}（地図の上の位置）にする。"""
+    W, H = lay["board"]["size"]
+    out = {1: {}, 2: {}}
+    for x in (data or {}).get("pieces") or []:
+        try:
+            rnd, no, px, py = int(x["round"]), int(x["no"]), float(x["x"]) / 1000 * W, float(x["y"]) / 1000 * H
+        except (TypeError, ValueError, KeyError):
+            continue
+        if rnd in (1, 2) and 1 <= no <= 8 and str(no) not in out[rnd] and where_px(lay, px, py):
+            out[rnd][str(no)] = [round(px), round(py)]
+    return out[1], out[2]
 
 
 def counts_of(pieces):

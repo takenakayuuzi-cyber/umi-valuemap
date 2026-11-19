@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<!-- バリューマップの地図の上で、太一のこまを指でドラッグして置く部品（Streamlit の部品。ほかのファイルはいらない） -->
+<style>
+  html, body { margin: 0; padding: 0; font-family: "Hiragino Sans", "Noto Sans JP", sans-serif; -webkit-user-select: none; user-select: none; }
+  .wrap { display: flex; gap: 12px; align-items: flex-start; }
+  #map { position: relative; flex: 1 1 auto; min-width: 0; border-radius: 18px; overflow: hidden; touch-action: none; container-type: inline-size; }
+  #map img.bg { width: 100%; display: block; pointer-events: none; }
+  .piece { position: absolute; width: 7.2cqw; transform: translate(-50%, -50%); touch-action: none; cursor: grab; z-index: 2; }
+  .piece img { width: 100%; display: block; pointer-events: none; filter: drop-shadow(0 0.5cqw 1cqw rgba(0,0,0,.55)); }
+  .piece .lab { position: absolute; left: 50%; top: 100%; transform: translateX(-50%); white-space: nowrap; font-size: max(10px, 1.6cqw); font-weight: 800;
+                color: #14254a; background: rgba(255,255,255,.92); border-radius: 999px; padding: 0.1em 0.6em; margin-top: 0.2cqw; }
+  .piece.ghost { opacity: .4; cursor: default; z-index: 1; }
+  .piece.ghost .lab { display: none; }
+  .piece.other { cursor: default; }
+  .piece.dragging { cursor: grabbing; z-index: 5; transform: translate(-50%, -50%) scale(1.15); }
+  #tray { flex: 0 0 110px; display: flex; flex-direction: column; flex-wrap: wrap; gap: 10px; align-items: center; min-height: 120px; padding: 10px; border-radius: 16px;
+          background: #f2f6fc; border: 3px dashed #c9d6ea; touch-action: none; }
+  #tray .hint { color: #5d6e8f; font-size: 13px; font-weight: 700; text-align: center; line-height: 1.4; }
+  @media (max-width: 640px) {   /* スマホ：置き場は地図の下に横ならび */
+    .wrap { flex-direction: column; }
+    #map { width: 100%; }
+    #tray { flex: none; width: 100%; box-sizing: border-box; flex-direction: row; min-height: 72px; }
+  }
+  #tray .piece { position: relative; width: 60px; transform: none; }
+  #tray .piece.dragging { transform: translate(-50%, -50%) scale(1.15); }
+  #tray .piece .lab { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="map"><img class="bg" id="bg" alt="バリューマップ" draggable="false"></div>
+  <div id="tray"><span class="hint" id="hint"></span></div>
+</div>
+<script>
+"use strict";
+// ---------- Streamlit とのやりとり（部品の決まり：ready → render を受けとる → 値を送る） ----------
+const send = (type, extra) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra), "*");
+const setHeight = () => send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 4 });
+let A = null, pos = {}, dragging = null;
+
+window.addEventListener("message", (e) => {
+  if (!e.data || e.data.type !== "streamlit:render" || dragging) return;
+  A = e.data.args;
+  pos = JSON.parse(JSON.stringify(A.pos || {}));
+  draw();
+});
+send("streamlit:componentReady", { apiVersion: 1 });
+
+// ---------- 場所の判定（server と同じ：真ん中の円・線のそば＝あいだ・2本の線のあいだ＝角） ----------
+function where(px, py) {
+  const g = A.geo, [cx, cy] = g.center;
+  if (px < 0 || py < 0 || px > g.size[0] || py > g.size[1]) return null;
+  if (Math.hypot(px - cx, py - cy) <= g.radius) return "C";
+  for (const [code, [ex, ey]] of Object.entries(g.lines)) {
+    const dx = ex - cx, dy = ey - cy, t = Math.max(0, Math.min(1, ((px - cx) * dx + (py - cy) * dy) / (dx * dx + dy * dy)));
+    if (Math.hypot(px - (cx + t * dx), py - (cy + t * dy)) <= g.near) return code;
+  }
+  const ang = (x, y) => (Math.atan2(y - cy, x - cx) + 2 * Math.PI) % (2 * Math.PI), a = ang(px, py);
+  const lines = Object.entries(g.lines).map(([c, [x, y]]) => [ang(x, y), c]).sort((p, q) => p[0] - q[0]);
+  for (let i = 0; i < lines.length; i++) {
+    const [a1, c1] = lines[i], [a2, c2] = lines[(i + 1) % lines.length];
+    if (a1 < a2 ? a >= a1 && a < a2 : a >= a1 || a < a2) return [...c1].find((ch) => c2.includes(ch)) || null;
+  }
+  return null;
+}
+
+// ---------- かく ----------
+// args: rnd（1 か 2）・pos（{番号: [x, y]} 机のみんなの今の位置）・mine（自分の番号。"all" なら全部動かせる＝机の代表）
+//       ghost（②のとき、①の位置。うすく出す）・seats（こまの数）・geo（地図の形と場所の名前）
+// 画像は この部品のフォルダにある map.jpg・p{1|2}_{番号}.png を読む（3秒ごとのやりとりを、位置の数字だけにするため）
+const mineOK = (no) => A.mine === "all" || String(A.mine) === String(no);
+function pieceEl(no, rnd, ghost) {
+  const d = document.createElement("div");
+  d.className = "piece" + (ghost ? " ghost" : "") + (!ghost && !mineOK(no) ? " other" : "");
+  d.dataset.no = no;
+  d.innerHTML = `<img src="p${rnd}_${no}.png" alt="${no}"><span class="lab"></span>`;
+  return d;
+}
+function place(el, x, y) {
+  const [W, H] = A.geo.size;
+  el.style.left = (x / W * 100) + "%"; el.style.top = (y / H * 100) + "%";
+  const c = where(x, y);
+  el.querySelector(".lab").textContent = c ? A.geo.names[c] : "";
+}
+function fit() {
+  let h = 0;
+  try { h = window.parent.innerHeight; } catch (e) { h = 0; }   // Streamlit の画面の高さ
+  if (!h) h = window.screen.height;
+  const wide = window.innerWidth > 640, room = h - (wide ? 120 : 230);
+  document.getElementById("map").style.maxWidth = Math.max(260, room * 1420 / 1080) + "px";
+}
+function draw() {
+  fit();
+  const map = document.getElementById("map"), tray = document.getElementById("tray"), bg = document.getElementById("bg");
+  if (!bg.getAttribute("src")) { bg.onload = setHeight; bg.src = "map.jpg"; }
+  map.querySelectorAll(".piece").forEach((p) => p.remove());
+  tray.querySelectorAll(".piece").forEach((p) => p.remove());
+  for (const [no, [x, y]] of Object.entries(A.ghost || {})) {   // ①のこま（②のときに うすく。動かせない）
+    const el = pieceEl(no, 1, true); map.appendChild(el); place(el, x, y);
+  }
+  let waiting = 0;
+  for (let no = 1; no <= A.seats; no++) {
+    const el = pieceEl(no, A.rnd, false);
+    if (pos[no]) { map.appendChild(el); place(el, pos[no][0], pos[no][1]); }
+    else if (mineOK(no)) { tray.appendChild(el); waiting++; }
+    else continue;   // ほかの人のまだ置いていないこまは、出さない
+    if (mineOK(no)) el.addEventListener("pointerdown", start);
+  }
+  const me = A.mine === "all" ? "" : `${A.mine}番のこま`;
+  document.getElementById("hint").textContent = waiting ? `${me || "こま"}を ゆびで地図へ` : "地図の外へ出すと、ここに もどります";
+  setHeight();
+}
+
+// ---------- ドラッグ（自分のこまだけ） ----------
+// こまを別の場所へ移しかえると、指の動きを見失う（指をはなしたことが分からない）ので、その場で浮かせて動かす
+function start(ev) {
+  const el = ev.currentTarget;
+  ev.preventDefault();
+  dragging = el; el.classList.add("dragging");
+  const fromTray = el.parentElement.id === "tray";
+  if (fromTray) { el.style.position = "fixed"; el.style.zIndex = 10; }
+  const move = (e) => {
+    e.preventDefault();
+    if (fromTray) { el.style.left = e.clientX + "px"; el.style.top = e.clientY + "px"; el.style.transform = "translate(-50%, -50%) scale(1.15)"; return; }
+    const r = document.getElementById("map").getBoundingClientRect(), [W, H] = A.geo.size;
+    place(el, (e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H);
+  };
+  move(ev);
+  const end = (e) => {
+    window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); window.removeEventListener("pointercancel", end);
+    const r = document.getElementById("map").getBoundingClientRect(), [W, H] = A.geo.size;
+    const x = (e.clientX - r.left) / r.width * W, y = (e.clientY - r.top) / r.height * H;
+    const no = el.dataset.no, inside = x >= 0 && y >= 0 && x <= W && y <= H;
+    if (inside) pos[no] = [Math.round(x), Math.round(y)]; else delete pos[no];   // 地図の外なら、もどす
+    dragging = null;
+    draw();
+    // 動かした こまだけを送る（ほかの人が同じときに動かしたものを、上書きしないように）
+    send("streamlit:setComponentValue", { value: { seq: Date.now() + Math.random(), no: Number(no), xy: inside ? pos[no] : null }, dataType: "json" });
+  };
+  window.addEventListener("pointermove", move, { passive: false }); window.addEventListener("pointerup", end); window.addEventListener("pointercancel", end);
+}
+window.addEventListener("resize", setHeight);
+</script>
+</body>
+</html>
