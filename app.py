@@ -1,7 +1,7 @@
 """研究会用「海の命」バリューマップの部屋（Streamlit Community Cloud ＋ Gemini）。
 
 ・入口のパスコード（参加者用・先生用）と Gemini の APIキーは、Streamlit の Secrets に入れる（プログラムに書かない）
-・机（1〜20。Secrets の DESKS で変えられる）：📷 Canva のバリューマップの写真 → AIが こまの場所を読んで人数を入れる（机が確かめて直す）
+・机（1〜25。Secrets の DESKS で変えられる）：📷 Canva のバリューマップの写真 → AIが こまの場所を読んで人数を入れる（机が確かめて直す）
               ① 話し合いの前の人数 → 問い（表と判定の決まりで選ぶ。Q9・Q10 だけAIが言葉を整える）
               ② 話し合いの後の人数 → ①から②への動きを1行（AI。合わなければ人数の差からプログラムが1行）
               💬 壁打ち → 答えは言わず、問い返すAI（2文まで）
@@ -24,7 +24,7 @@ VM = core.load(MATERIAL)
 P = core.places_of(VM)
 CODES = [p["code"] for p in VM["places"]]
 NAMES = {c: core.short(VM, c) for c in CODES}
-DESKS = int(ai.setting("DESKS", "20") or 20)   # 机の数（1つの机に4人 × 20 ＝ 80人）。Secrets の DESKS で変えられる
+DESKS = int(ai.setting("DESKS", "25") or 25)   # 机の数（25机）。Secrets の DESKS で変えられる
 SEATS = 8   # こまの番号（Canva のボードに合わせて 1〜8。4人の机は 1〜4 だけ置く）
 
 
